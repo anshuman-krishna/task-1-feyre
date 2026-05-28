@@ -113,3 +113,23 @@ export function useRunPrediction() {
     },
   });
 }
+
+export type BulkAction =
+  | { action: "archive"; ids: string[] }
+  | { action: "status"; ids: string[]; status: WorkflowStatus };
+
+export function useBulkPatientAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BulkAction) =>
+      fetcher<{ count: number }>("/api/patients/bulk", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["patients"] });
+      qc.invalidateQueries({ queryKey: ["activity"] });
+      qc.invalidateQueries({ queryKey: ["analytics"] });
+    },
+  });
+}

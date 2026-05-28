@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { Header, type CurrentUser } from "@/components/layout/header";
 import { Sidebar } from "@/components/layout/sidebar";
+import { useEvents } from "@/hooks/use-events";
 
 export function AppShell({
   sidebar,
@@ -14,6 +15,7 @@ export function AppShell({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  useEvents(); // SSE → query invalidations
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">

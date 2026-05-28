@@ -19,7 +19,7 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
     action: "sign_in",
     entityType: "user",
     entityId: user.id,
-    actor: { id: user.id, name: user.name },
+    actor: { id: user.id, name: user.name, organizationId: user.organizationId },
   });
   return ok({ id: user.id, name: user.name, role: user.role });
 });

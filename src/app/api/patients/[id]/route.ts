@@ -18,13 +18,13 @@ export const PATCH = withErrorHandling(async (req: NextRequest, ctx: Ctx) => {
   const body = await req.json();
   const input = PatientUpdateSchema.parse(body);
   const user = await getCurrentUser();
-  const patient = await updatePatient(id, input, user ? { id: user.id, name: user.name } : null);
+  const patient = await updatePatient(id, input, user ? { id: user.id, name: user.name, organizationId: user.organizationId } : null);
   return ok(patient);
 });
 
 export const DELETE = withErrorHandling(async (_req: NextRequest, ctx: Ctx) => {
   const { id } = await ctx.params;
   const user = await getCurrentUser();
-  const patient = await archivePatient(id, user ? { id: user.id, name: user.name } : null);
+  const patient = await archivePatient(id, user ? { id: user.id, name: user.name, organizationId: user.organizationId } : null);
   return ok(patient);
 });

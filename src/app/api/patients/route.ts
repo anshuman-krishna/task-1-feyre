@@ -16,6 +16,6 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
   const user = await getCurrentUser();
   const body = await req.json();
   const input = PatientCreateSchema.parse(body);
-  const patient = await createPatient(input, user ? { id: user.id, name: user.name } : null);
+  const patient = await createPatient(input, user ? { id: user.id, name: user.name, organizationId: user.organizationId } : null);
   return ok(patient, { status: 201 });
 });

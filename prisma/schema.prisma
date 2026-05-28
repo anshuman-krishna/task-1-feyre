@@ -1,5 +1,6 @@
 // mira health intelligence — schema
-// designed for future multi-tenant + ai orchestration without rework
+// production-scalable foundation: tenant-ready, queue-backed predictions,
+// stored notifications, audit fidelity
 
 generator client {
   provider      = "prisma-client-js"
@@ -41,6 +42,8 @@ enum AuditAction {
   status_change
   sign_in
   sign_out
+  bulk_archive
+  bulk_status
 }
 
 enum Role {
@@ -57,31 +60,68 @@ enum WorkflowStatus {
   urgent_review
 }
 
-model User {
+enum PredictionJobStatus {
+  queued
+  processing
+  completed
+  failed
+  dead
+}
+
+enum NotificationType {
+  prediction_completed
+  prediction_failed
+  follow_up_due
+  patient_critical
+  system
+}
+
+model Organization {
   id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users         User[]
+  patients      Patient[]
+  notifications Notification[]
+
+  @@map("organizations")
+}
+
+model User {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
   name      String
   email     String   @unique
   role      Role     @default(clinician)
   avatarHue Int      @default(180)
   archivedAt DateTime?
 
-  assignedPatients Patient[]  @relation("AssignedClinician")
+  assignedPatients Patient[]      @relation("AssignedClinician")
   auditLogs        AuditLog[]
+  notifications    Notification[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([organizationId])
   @@map("users")
 }
 
 model Patient {
-  id        String   @id @default(cuid())
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
   fullName  String
-  email     String   @unique
+  email     String
   dob       DateTime @db.Date
   sex       String?
 
-  // diagnostic inputs
   glucose             Float?
   haemoglobin         Float?
   cholesterol         Float?
@@ -89,13 +129,11 @@ model Patient {
   diastolic           Int?
   bmi                 Float?
 
-  // mirrored snapshot of the latest prediction (cheap list reads)
   aiPrediction         String?
   riskLevel            RiskLevel?
   predictionConfidence Float?
   lastPredictedAt      DateTime?
 
-  // workflow
   status        WorkflowStatus @default(new_patient)
   assignedToId  String?
   assignedTo    User?          @relation("AssignedClinician", fields: [assignedToId], references: [id], onDelete: SetNull)
@@ -104,19 +142,21 @@ model Patient {
 
   archivedAt DateTime?
 
-  predictions PredictionLog[]
-  notes       Note[]
-  auditLogs   AuditLog[]
+  predictions    PredictionLog[]
+  predictionJobs PredictionJob[]
+  notes          Note[]
+  auditLogs      AuditLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([organizationId, email])
+  @@index([organizationId, archivedAt])
   @@index([riskLevel, archivedAt])
   @@index([status, archivedAt])
   @@index([assignedToId])
   @@index([followUpAt])
   @@index([createdAt])
-  @@index([archivedAt])
   @@map("patients")
 }
 
@@ -133,7 +173,7 @@ model PredictionLog {
   summary         String
   recommendations Json
   observations    Json
-  contributions   Json // [{ label, weight: 0..1, direction: 'up'|'neutral' }]
+  contributions   Json
 
   inputSnapshot   Json
   requestPayload  Json
@@ -146,6 +186,29 @@ model PredictionLog {
   @@index([patientId, createdAt])
   @@index([provider])
   @@map("prediction_logs")
+}
+
+model PredictionJob {
+  id           String              @id @default(cuid())
+  patientId    String
+  patient      Patient             @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  status       PredictionJobStatus @default(queued)
+  attempts     Int                 @default(0)
+  maxAttempts  Int                 @default(3)
+  provider     String?
+  scheduledFor DateTime            @default(now())
+  startedAt    DateTime?
+  completedAt  DateTime?
+  error        String?
+  resultId     String?
+  requestedBy  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, scheduledFor])
+  @@index([patientId, createdAt])
+  @@map("prediction_jobs")
 }
 
 model Note {
@@ -184,4 +247,25 @@ model AuditLog {
   @@index([patientId, createdAt])
   @@index([userId, createdAt])
   @@map("audit_logs")
+}
+
+model Notification {
+  id             String           @id @default(cuid())
+  organizationId String
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type    NotificationType
+  title   String
+  body    String?
+  link    String?
+  payload Json?
+
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt, createdAt])
+  @@index([organizationId, createdAt])
+  @@map("notifications")
 }

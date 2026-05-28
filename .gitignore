@@ -44,7 +44,7 @@ prisma/dev.db-journal
 # typescript
 *.tsbuildinfo
 
-# testing / planning artifacts — never commit
+# testing / planning
 /testing
 claude*
 *.prompt

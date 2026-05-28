@@ -10,7 +10,7 @@ export const POST = withErrorHandling(async () => {
       action: "sign_out",
       entityType: "user",
       entityId: user.id,
-      actor: { id: user.id, name: user.name },
+      actor: { id: user.id, name: user.name, organizationId: user.organizationId },
     });
   }
   await clearSessionCookie();

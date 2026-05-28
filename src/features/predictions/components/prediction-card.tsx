@@ -48,19 +48,22 @@ export function PredictionCard({
   patientId,
   latest,
   hasBiomarkers,
+  jobStatus,
 }: {
   patientId: string;
   latest: LatestPrediction;
   hasBiomarkers: boolean;
+  jobStatus: "queued" | "processing" | "completed" | "failed" | "dead" | null;
 }) {
   const run = useRunPrediction();
+  const running = run.isPending || jobStatus === "queued" || jobStatus === "processing";
 
   const onRun = async () => {
     try {
       await run.mutateAsync(patientId);
-      toast.success("Prediction updated");
+      toast.message("Prediction queued");
     } catch (err) {
-      toast.error("Prediction failed", {
+      toast.error("Could not queue prediction", {
         description: err instanceof Error ? err.message : "unknown error",
       });
     }
@@ -79,10 +82,22 @@ export function PredictionCard({
               : "Run the prediction engine to generate observations."}
           </CardDescription>
         </div>
-        <Button size="sm" onClick={onRun} disabled={run.isPending || !hasBiomarkers}>
-          <Activity className={cn("h-3.5 w-3.5", run.isPending && "animate-pulse")} />
-          {run.isPending ? "Running…" : "Re-run"}
-        </Button>
+        <div className="flex items-center gap-2">
+          {jobStatus === "queued" && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" /> Queued
+            </span>
+          )}
+          {jobStatus === "processing" && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-accent px-2 py-0.5 text-[10px] font-medium text-accent-foreground">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" /> Processing
+            </span>
+          )}
+          <Button size="sm" onClick={onRun} disabled={running || !hasBiomarkers}>
+            <Activity className={cn("h-3.5 w-3.5", running && "animate-pulse")} />
+            {running ? "Running…" : "Re-run"}
+          </Button>
+        </div>
       </CardHeader>
 
       {latest ? (

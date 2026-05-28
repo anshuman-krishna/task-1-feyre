@@ -3,8 +3,9 @@ import { prisma } from "@/server/prisma";
 import { logAudit, type Actor } from "@/services/audit";
 import { log } from "@/server/logger";
 import { metrics } from "@/server/metrics";
+import { events } from "@/server/events";
 import { ageFromDob } from "@/lib/format";
-import { getProvider } from "./providers";
+import { getProvider, recordFailure, recordSuccess } from "./providers";
 import { normalize } from "./normalize";
 import { PredictionError, type Biomarkers } from "./types";
 
@@ -85,6 +86,7 @@ export async function executePrediction(patientId: string, opts: ExecuteOpts = {
       }),
     ]);
 
+    recordSuccess(provider.name);
     metrics.inc("predictions_total", { provider: provider.name, risk: result.riskLevel });
     metrics.observe("prediction_latency_ms", latencyMs, { provider: provider.name });
     log.info("prediction.ok", {
@@ -109,6 +111,7 @@ export async function executePrediction(patientId: string, opts: ExecuteOpts = {
     const latencyMs = Date.now() - startedAt;
     const message = err instanceof Error ? err.message : "unknown provider error";
 
+    recordFailure(provider.name);
     metrics.inc("predictions_failed", { provider: provider.name });
     log.error("prediction.fail", { patientId, provider: provider.name, message, latencyMs });
 

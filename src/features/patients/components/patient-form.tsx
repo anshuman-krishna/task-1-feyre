@@ -50,9 +50,16 @@ export function PatientForm() {
   const onSubmit = handleSubmit(async (values) => {
     try {
       const patient = await create.mutateAsync(values);
+      const hasInputs =
+        values.glucose ||
+        values.haemoglobin ||
+        values.cholesterol ||
+        values.systolic ||
+        values.diastolic ||
+        values.bmi;
       toast.success("Patient created", {
-        description: patient.aiPrediction
-          ? `AI observation: ${patient.aiPrediction}`
+        description: hasInputs
+          ? "Prediction queued — observation will appear in a moment."
           : "No biomarkers were provided — prediction skipped.",
       });
       router.push(`/patients/${patient.id}`);

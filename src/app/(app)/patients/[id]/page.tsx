@@ -22,6 +22,7 @@ import { ageFromDob, formatDate, initials } from "@/lib/format";
 import { prisma } from "@/server/prisma";
 import { listPatientActivity } from "@/services/activity";
 import { hasBiomarkers } from "@/services/prediction";
+import { activeJobFor } from "@/services/queue/prediction";
 import { PredictionCard } from "@/features/predictions/components/prediction-card";
 import { PredictionTimeline } from "@/features/predictions/components/prediction-timeline";
 import { NoteList } from "@/features/notes/components/note-list";
@@ -37,7 +38,7 @@ export default async function PatientDetailPage({
 }) {
   const { id } = await params;
 
-  const [patient, notes, predictions, activity] = await Promise.all([
+  const [patient, notes, predictions, activity, activeJob] = await Promise.all([
     prisma.patient.findUnique({
       where: { id },
       include: { assignedTo: true },
@@ -49,6 +50,7 @@ export default async function PatientDetailPage({
       take: 20,
     }),
     listPatientActivity(id),
+    activeJobFor(id),
   ]);
 
   if (!patient || patient.archivedAt) notFound();
@@ -235,6 +237,7 @@ export default async function PatientDetailPage({
           patientId={patient.id}
           latest={latest}
           hasBiomarkers={hasBiomarkers(patient)}
+          jobStatus={activeJob?.status ?? null}
         />
       </div>
 

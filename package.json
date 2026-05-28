@@ -14,10 +14,10 @@
     "db:studio": "prisma studio",
     "db:generate": "prisma generate",
     "db:seed": "prisma db seed",
-    "db:reset": "prisma migrate reset --force"
+    "db:reset": "prisma db push --force-reset --accept-data-loss && prisma db seed"
   },
   "prisma": {
-    "seed": "tsx prisma/seed.ts"
+    "seed": "MIRA_DISABLE_WORKER=1 tsx prisma/seed.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",

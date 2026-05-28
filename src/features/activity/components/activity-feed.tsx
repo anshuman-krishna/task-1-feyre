@@ -38,7 +38,9 @@ export type ActivityEntry = {
     | "assign"
     | "status_change"
     | "sign_in"
-    | "sign_out";
+    | "sign_out"
+    | "bulk_archive"
+    | "bulk_status";
   patientId: string | null;
   patientName: string | null;
   performedBy: string | null;
@@ -134,6 +136,23 @@ const meta: Record<
     icon: LogOut,
     tint: "bg-muted text-muted-foreground",
     label: () => `signed out`,
+  },
+  bulk_archive: {
+    icon: Archive,
+    tint: "bg-muted text-muted-foreground",
+    label: (e) => {
+      const m = e.metadata as { count?: number } | null;
+      return `archived ${m?.count ?? "several"} patients`;
+    },
+  },
+  bulk_status: {
+    icon: Workflow,
+    tint: "bg-sky-50 text-sky-700",
+    label: (e) => {
+      const m = e.metadata as { count?: number; status?: WorkflowStatus } | null;
+      const label = m?.status ? STATUS_LABELS[m.status] : "updated";
+      return `moved ${m?.count ?? "several"} patients → ${label}`;
+    },
   },
 };
 

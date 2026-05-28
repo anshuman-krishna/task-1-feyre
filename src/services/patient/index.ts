@@ -1,9 +1,10 @@
-import type { Prisma, WorkflowStatus } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/prisma";
 import { NotFound, Conflict } from "@/lib/api-error";
 import { logAudit, type Actor } from "@/services/audit";
-import { executePrediction, hasBiomarkers } from "@/services/prediction";
-import { shouldAutoTransition, suggestFollowUp, suggestStatus } from "@/services/workflow";
+import { hasBiomarkers } from "@/services/prediction";
+import { enqueuePrediction } from "@/services/queue/prediction";
+import { tenantOf } from "@/services/tenant";
 import type {
   PatientCreateInput,
   PatientUpdateInput,
@@ -61,11 +62,15 @@ export async function getPatient(id: string) {
 }
 
 export async function createPatient(input: PatientCreateInput, actor?: Actor) {
-  const existing = await prisma.patient.findUnique({ where: { email: input.email } });
+  const organizationId = tenantOf(actor);
+  const existing = await prisma.patient.findUnique({
+    where: { organizationId_email: { organizationId, email: input.email } },
+  });
   if (existing) throw Conflict("a patient with this email already exists");
 
   const patient = await prisma.patient.create({
     data: {
+      organizationId,
       fullName: input.fullName,
       email: input.email,
       dob: new Date(input.dob),
@@ -90,8 +95,7 @@ export async function createPatient(input: PatientCreateInput, actor?: Actor) {
   });
 
   if (hasBiomarkers(patient)) {
-    await executePrediction(patient.id, { actor });
-    await autoTransitionFromLatest(patient.id, actor);
+    await enqueuePrediction(patient.id, { actor });
   }
 
   return prisma.patient.findUnique({
@@ -155,8 +159,7 @@ export async function updatePatient(id: string, input: PatientUpdateInput, actor
   );
   const fresh = await prisma.patient.findUnique({ where: { id }, include: { assignedTo: true } });
   if (biomarkersChanged && fresh && hasBiomarkers(fresh)) {
-    await executePrediction(id, { actor });
-    await autoTransitionFromLatest(id, actor);
+    await enqueuePrediction(id, { actor });
   }
 
   return prisma.patient.findUnique({
@@ -181,26 +184,3 @@ export async function archivePatient(id: string, actor?: Actor) {
   return patient;
 }
 
-// nudge the workflow status when the patient hasn't been triaged yet
-async function autoTransitionFromLatest(patientId: string, actor?: Actor) {
-  const patient = await prisma.patient.findUnique({ where: { id: patientId } });
-  if (!patient?.riskLevel) return;
-  if (!shouldAutoTransition(patient.status)) return;
-
-  const next: WorkflowStatus = suggestStatus(patient.riskLevel);
-  const followUpAt = suggestFollowUp(patient.riskLevel);
-  if (next === patient.status && !followUpAt) return;
-
-  await prisma.patient.update({
-    where: { id: patientId },
-    data: { status: next, followUpAt },
-  });
-  await logAudit({
-    action: "status_change",
-    entityType: "patient",
-    entityId: patientId,
-    patientId,
-    actor,
-    metadata: { from: patient.status, to: next, auto: true, reason: patient.riskLevel },
-  });
-}

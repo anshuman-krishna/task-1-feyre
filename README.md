@@ -1,223 +1,92 @@
-# Mira Health Intelligence
+# mira
 
-A healthcare workflow and predictive automation platform — a Next.js
-prototype for clinics, diagnostic centers, and telehealth operators.
-Phase 3 adds the people layer: sessioned users, clinician assignments,
-workflow status, explainable predictions, operational alerts, exports,
-and observability seams.
+mira is a little healthcare workflow tool i've been building. think of it as a small internal product a clinic or diagnostic centre could plausibly use: patients come in, biomarkers get recorded, the system runs an ai pass over the panel, surfaces risk signals, and keeps the workflow honest with statuses, follow ups, notes, and a real activity trail.
 
-> Mira generates AI-assisted risk signals, not medical diagnoses.
-> Output is intended to support clinicians, never replace them.
+it isn't a medical device, and it shouldn't pretend to be. ai output is a signal, not a diagnosis. that disclaimer is everywhere in the ui too.
 
-## Stack
+## stack
 
-| Layer         | Choice                                       |
-| ------------- | -------------------------------------------- |
-| Framework     | Next.js 15 (App Router, route handlers)      |
-| Language      | TypeScript, strict mode                      |
-| UI            | Tailwind CSS, Radix primitives, lucide-react |
-| Forms         | react-hook-form + zod                        |
-| Data fetch    | TanStack Query                               |
-| Charts        | Recharts                                     |
-| ORM           | Prisma                                       |
-| DB            | Postgres (Docker Compose for local)          |
-| Auth          | Signed cookie session (auth.js-shaped seam)  |
-| Notifications | sonner                                       |
-| Observability | structured JSON logger + in-process metrics  |
+next.js 15 with the app router. typescript everywhere, strict. tailwind plus radix primitives for the ui, with a few hand rolled bits (cards, badges, table, dropdown, etc). prisma on postgres. tanstack query on the client. zod for validation. react hook form for forms. recharts for charts. sonner for toasts. server sent events for the live layer. a tiny cookie session for auth.
 
-## Getting started
+## what works right now
+
+a lot more than i expected to be honest. here's the honest tour.
+
+**signing in.** there's a sign in page at `/sign-in` that lists the seeded workspace members. pick one and you're in. the session is a signed cookie (hmac sha256 over the user id), the edge middleware blocks every protected route, and `getCurrentUser()` is memoised per request. it isn't a real password flow but the seams are the same shape as auth.js, so swapping it later is mostly a one file change.
+
+**patients.** create, edit (status and assignment inline), archive (soft, via `archivedAt`), search by name or email or condition, filter by risk level and workflow status, paginate, sort, and bulk archive or bulk reassign with the sticky action bar at the bottom of the table. the list state lives in the url so refresh and share both behave.
+
+**predictions.** this is the part i'm most happy with. when biomarkers come in, the request returns immediately and a job lands in `prediction_jobs`. a background worker (running in the same node process for now) picks it up, runs the internal heuristic provider, writes a `prediction_logs` row, mirrors the latest snapshot onto the patient, and emits an event. the heuristic isn't a black box: it scores glucose, cholesterol, blood pressure, haemoglobin, bmi against rough clinical ranges and reports per biomarker contributions, so the ui can show "glucose drove 38% of this classification" instead of just spitting out a label. confidence scales with how many biomarkers were provided.
+
+**explainability.** the prediction card on each patient shows the condition, a written summary, a confidence bar, contribution bars per biomarker, the supporting findings with their status, and recommended next steps. underneath it tells you which provider ran it, the model name, latency, and when it ran. nothing is hidden.
+
+**workflow.** every patient sits in one of five states: new, monitoring, follow up needed, stable, urgent review. plus an assigned clinician, a follow up date, and a last reviewed timestamp. predictions nudge the status automatically, but only while the patient is still in a "soft" state (new or stable). once a clinician moves someone into monitoring or follow up or urgent, the model never overrides that. this rule was important to me. the workflow has to feel like the clinician is in charge.
+
+**realtime.** there's one server sent events endpoint, `/api/events/stream`. the client opens it once globally inside the authed shell. when something interesting happens (a prediction finishes, a notification lands, a status changes), the event fans out, the relevant tanstack query keys get invalidated, and a debounced `router.refresh()` re renders the server components. open two tabs, run a prediction in one, watch the other update. heartbeats every 15 seconds keep proxies happy.
+
+**notifications.** real durable rows in the `notifications` table, not just toasts. when a prediction comes back elevated or critical, the assigned clinician and the person who requested it both get a notification. the bell in the header shows the unread count, opens a panel, and supports mark one or mark all read. low and moderate predictions stay quiet on purpose, because pinging clinicians for routine results is exactly how alert fatigue happens.
+
+**reliability.** each provider has a little circuit breaker. three failures in a row and it opens for 30 seconds. while it's open, mira falls back to the internal heuristic. on the next call after the cooldown it tries a half open probe, closes on success, reopens on failure. the internal provider is the floor, never degraded. you can see the live state at `/api/health/deep`.
+
+**audit.** every meaningful action lands in `audit_logs` with the actor's user id and name. that's also the source of truth for the activity feed (no separate events table). signing in, status changes, predictions, note edits, archives, exports, all of it.
+
+**analytics.** a real page with charts pulled from postgres aggregates: status distribution, risk distribution, prediction throughput over time, patient growth, biomarker averages, intake velocity (7 day vs prior 7), follow up backlog, prediction failures in the last 24h.
+
+**exports.** csv download for the whole active caseload, and a per patient markdown report that includes the latest ai observation, recommendations, prediction history, and recent notes. both are audited.
+
+**observability.** structured json logs with a level gate. a tiny in process metrics module counting predictions by provider and risk, queue depths, notifications, prediction latency. all surfaced through `/api/health/deep` along with db latency and provider circuit states.
+
+**tenant readiness.** there's an `Organization` model and every user, patient, and notification carries an `organizationId`. patient uniqueness is scoped to (org, email), so the same email can live in two clinics later. enforcement isn't strict yet (the ui is single org), but there's exactly one place to tighten that when the time comes.
+
+## running it
+
+you'll need node 20 plus and docker. clone, then:
 
 ```bash
-# 1. install deps
 npm install
-
-# 2. environment
 cp .env.example .env
-# generate a real SESSION_SECRET in .env (anything 16+ chars locally)
+```
 
-# 3. start postgres
+set a `SESSION_SECRET` in `.env` (anything 16 plus characters is fine locally).
+
+```bash
 docker compose up -d db
-
-# 4. sync schema
-npm run db:push
-
-# 5. seed users + a believable clinic caseload
-npm run db:seed
-
-# 6. dev
+npm run db:reset
 npm run dev
 ```
 
-Open <http://localhost:3000>. You'll land on `/sign-in` — pick any seeded
-user (admin, two clinicians, or an analyst).
+open http://localhost:3000. you'll land on `/sign-in`. pick any seeded account. dr. maria reyes is the admin if you want the full picture.
 
-## Architecture
+`db:reset` is a `prisma db push force-reset` followed by the seed. the seed creates the organization, four users, around twenty patients with a believable spread of biomarkers, runs a prediction over each, drops some clinician notes, and pre seeds a few notifications so the bell shows something on first boot. when you make patient changes in the ui, the queue worker picks them up automatically.
 
-```
-src/
-  app/                route handlers + page tree
-    (app)/            authenticated shell — sidebar + header + main
-    sign-in/          public sign-in page (server component picker)
-    api/              REST endpoints
-  components/         shared primitives (ui/, layout/)
-  features/           domain modules (patients/, predictions/, notes/,
-                      activity/, analytics/, dashboard/)
-  hooks/              use-debounce, use-query-state, use-mobile
-  lib/                cn, format, env, api-response, api-error, fetcher
-  server/             prisma, session, logger, metrics, withErrorHandling
-  services/           domain logic (patient/, prediction/, note/,
-                      activity/, audit/, analytics/, export/, user/,
-                      workflow/)
-  middleware.ts       edge auth gate
-```
+useful scripts: `npm run dev`, `npm run build`, `npm run typecheck`, `npm run lint`, `npm run db:studio` (prisma studio for poking at the data), `npm run db:seed` (re run just the seed without resetting).
 
-### Auth
+env vars worth knowing: `AI_PROVIDER` (defaults to `internal`, can be `mock`, `openai`, or `groq`, though the external ones are stubs until i wire keys), `MIRA_DISABLE_WORKER` (set to `1` to keep the in process worker off, handy when you're poking at the queue manually), `LOG_LEVEL` (`debug` if you want the chatty json log lines).
 
-The cookie is `mira_session = <userId>.<HMAC-SHA256(userId, SESSION_SECRET)>`.
-Edge middleware checks for its presence + signature shape on every protected
-route. Server components and route handlers use `getCurrentUser()` (memoised
-per request via React `cache`) to resolve the actual user record.
-
-There's no password layer in this phase — picking a user on `/sign-in`
-sets the cookie. The seams (middleware, session helper, audit `actor`) are
-identical to a production auth.js setup; swapping the cookie reader is the
-only change needed to wire SSO.
-
-### Workflow
-
-Patients carry a `status` (new / monitoring / follow_up_needed / stable /
-urgent_review), an `assignedToId`, a `followUpAt`, and a `reviewedAt`. When a
-prediction lands, the system auto-transitions status only if the patient is
-still in a "soft" state (new or stable). Once a clinician moves the patient
-into monitoring, follow-up, or urgent review, those decisions are never
-overwritten by the model.
-
-### Prediction pipeline
-
-```
-client / route handler
-   │
-   ▼
-services/patient.create()  or  .update()  or  POST /api/patients/[id]/predict
-   │  (biomarkers changed?)
-   ▼
-services/prediction.executePrediction(patientId)
-   ├─ load patient + snapshot biomarkers
-   ├─ provider = getProvider(env.AI_PROVIDER)
-   ├─ provider.predict(input)
-   ├─ normalize(result)              ← clamps shape, preserves contributions
-   ├─ tx: insert PredictionLog (incl. contributions, observations,
-   │       inputSnapshot) + update Patient (riskLevel, confidence,
-   │       lastPredictedAt, aiPrediction)
-   ├─ metrics.inc("predictions_total", { provider, risk })
-   ├─ metrics.observe("prediction_latency_ms", latencyMs, { provider })
-   ├─ log.info("prediction.ok", { ... })
-   ├─ audit: action=predict, actor={id,name}, metadata={provider, risk, latencyMs}
-   └─ on failure: log + counter + audit predict_fail
-```
-
-The internal heuristic provider produces a normalised `contributions[]` array
-— per-biomarker shares of the total risk score — so the UI can render
-"glucose drove 38% of this classification" without guessing.
-
-### Activity
-
-All activity flows through `audit_logs`. The activity feed reads it with
-patient + user joins and renders `<actor> <verb>` consistently. Sign-in,
-sign-out, status changes (auto vs manual), reassignments, predictions, notes,
-exports — all in one stream.
-
-### Observability
-
-- `src/server/logger.ts` — structured JSON lines, level-gated by `LOG_LEVEL`
-- `src/server/metrics.ts` — in-process counters + summaries (predictions
-  by provider, latency, failures); ready to swap for a Prometheus exporter
-  behind the same interface
-
-## Data model
-
-- `User` — workspace member with role (admin / clinician / analyst)
-- `Patient` — record + biomarkers + mirrored latest prediction snapshot +
-  workflow (`status`, `assignedToId`, `followUpAt`, `reviewedAt`)
-- `PredictionLog` — every AI run: provider, model, latency, request +
-  response, observation array, contribution array, biomarker `inputSnapshot`
-- `Note` — per-patient clinician notes with author + timestamps
-- `AuditLog` — generic ledger; `userId` joins back to the acting user
-
-Indexes are tuned for the dashboard and patient list (`riskLevel/archivedAt`,
-`status/archivedAt`, `assignedToId`, `followUpAt`, `createdAt`) and the
-activity feed (`patientId/createdAt`, `userId/createdAt`).
-
-## API
-
-Envelope:
-
-```ts
-{ success: true, data: T }
-{ success: false, error: { message: string, code?: string, details?: unknown } }
-```
-
-| Method | Path                                | Notes                                |
-| ------ | ----------------------------------- | ------------------------------------ |
-| GET    | `/api/health`                       | liveness probe (public)              |
-| POST   | `/api/auth/sign-in`                 | body `{ userId }`; sets cookie       |
-| POST   | `/api/auth/sign-out`                | clears cookie                        |
-| GET    | `/api/auth/me`                      | current user (or null)               |
-| GET    | `/api/users`                        | workspace members                    |
-| GET    | `/api/patients`                     | list, filter, paginate, sort         |
-| POST   | `/api/patients`                     | create + auto-predict                |
-| GET    | `/api/patients/export`              | CSV download of every active patient |
-| GET    | `/api/patients/[id]`                | single record                        |
-| PATCH  | `/api/patients/[id]`                | partial update (re-predicts)         |
-| DELETE | `/api/patients/[id]`                | soft-archive                         |
-| POST   | `/api/patients/[id]/predict`        | manual prediction                    |
-| GET    | `/api/patients/[id]/predictions`    | history                              |
-| GET    | `/api/patients/[id]/report`         | markdown report                      |
-| GET    | `/api/patients/[id]/notes`          | per-patient notes                    |
-| POST   | `/api/patients/[id]/notes`          | add note                             |
-| DELETE | `/api/notes/[id]`                   | remove note                          |
-| GET    | `/api/patients/[id]/activity`       | per-patient audit feed               |
-| GET    | `/api/activity`                     | global activity feed                 |
-| GET    | `/api/analytics`                    | dashboard aggregates                 |
-
-All routes except `/api/health` and `/api/auth/sign-in` require a valid
-session cookie.
-
-## Scripts
-
-| Script               | Description                          |
-| -------------------- | ------------------------------------ |
-| `npm run dev`        | local dev server                     |
-| `npm run build`      | production build                     |
-| `npm run start`      | start built server                   |
-| `npm run lint`       | next/eslint                          |
-| `npm run typecheck`  | strict tsc, no emit                  |
-| `npm run format`     | prettier write                       |
-| `npm run db:push`    | apply schema without migration files |
-| `npm run db:migrate` | dev migration                        |
-| `npm run db:seed`    | seed users + clinic caseload         |
-| `npm run db:reset`   | reset + reseed                       |
-| `npm run db:studio`  | prisma studio                        |
-
-## Environment
-
-```env
-DATABASE_URL="postgresql://mira:mira@localhost:5432/mira?schema=public"
-SESSION_SECRET="<16+ chars; rotate to invalidate all sessions>"
-AI_PROVIDER="internal"   # mock | internal | openai | groq
-```
-
-## Docker
+## docker, if you want it that way
 
 ```bash
 docker compose up --build
 ```
 
-The compose file pins both app + Postgres; the Dockerfile uses Next's
-standalone output and runs as a non-root user.
+multi stage dockerfile, next standalone output, runs as a non root user. in a real deployment the worker would split into its own container by importing `server/worker` and calling `ensureWorker()` from a tiny entry. that part is documented in the architecture notes but not wired by default.
 
-## Roadmap
+## what's next
 
-Phase 4: live OpenAI / Groq providers, RBAC enforcement, realtime activity
-via SSE, PDF report rendering, batch prediction reruns through a job runner,
-biomarker drift alerts.
+a rough sketch of what's queued up for upcoming pushes, roughly in priority order. i'll trim or reorder this as i actually do the work.
+
+- live openai and groq providers. the registry slots are there, the circuit breaker already wraps them, it's mostly a matter of dropping in the client calls and key management.
+- real rbac. roles are captured today but nothing actually gates by them. admin gets to do everything, analyst probably shouldn't be able to archive patients, that kind of thing.
+- moving the worker out of process. the queue table is already the contract, so this is swapping in bullmq or pg boss without touching the request paths.
+- per tenant sse channels and proper organization scoping in the query layer. right now the broadcast model is fine because there's one org, but i don't want it to leak when there are more.
+- pdf reports. the markdown export is the right intermediate, the next step is something that can be emailed or stored.
+- batch reruns. if the heuristic changes or a provider gets swapped, being able to rerun predictions across a cohort would be useful.
+- biomarker drift alerts. if a patient's glucose ticks up across three visits without crossing the static thresholds, the system should still notice.
+- an organization switcher and the tiny ui that goes with it, once multi tenant is real.
+- a few quality of life things: keyboard shortcuts, a quick add patient modal, maybe a small in app metrics widget for ops.
+
+## one last note
+
+if you're skimming this and wondering whether something is real or a stub, the answer is mostly real. the openai and groq providers are stubs (they throw "not configured", which is honest), and the worker is in process rather than a separate service, but the queue, the events, the audit trail, the notifications, the analytics, the workflow rules, the heuristic, the circuit breaker, the explainability, the exports, the bulk actions, all of those actually work end to end. you can sign in, make changes, and watch the system respond.
+
+ai observations are signals, not diagnoses. always review with a qualified clinician. mira's job is to make their job easier, not to take it.

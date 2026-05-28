@@ -1,8 +1,7 @@
 import type { RiskLevel, WorkflowStatus } from "@prisma/client";
-
-// risk-driven workflow defaults. clinicians can always override; this is the
-// nudge the system applies when a new prediction lands and the patient is
-// still in their default state.
+import { prisma } from "@/server/prisma";
+import { logAudit, type Actor } from "@/services/audit";
+import { events } from "@/server/events";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -24,11 +23,36 @@ export function suggestFollowUp(risk: RiskLevel, from = new Date()): Date | null
   return days == null ? null : new Date(from.getTime() + days * DAY);
 }
 
-// re-derive only when the patient is still on a "soft" state (new or stable).
-// once a clinician moves the patient into monitoring/follow_up/urgent we
-// respect their decision until they archive or reset.
 export function shouldAutoTransition(current: WorkflowStatus) {
   return current === "new_patient" || current === "stable";
+}
+
+// called by the queue worker after a successful prediction. honours the
+// "only nudge while in a soft state" rule.
+export async function applyAutoTransition(patientId: string, actor?: Actor) {
+  const patient = await prisma.patient.findUnique({ where: { id: patientId } });
+  if (!patient?.riskLevel) return;
+  if (!shouldAutoTransition(patient.status)) return;
+
+  const next = suggestStatus(patient.riskLevel);
+  const followUpAt = suggestFollowUp(patient.riskLevel);
+  if (next === patient.status && !followUpAt) return;
+
+  await prisma.patient.update({
+    where: { id: patientId },
+    data: { status: next, followUpAt },
+  });
+
+  await logAudit({
+    action: "status_change",
+    entityType: "patient",
+    entityId: patientId,
+    patientId,
+    actor,
+    metadata: { from: patient.status, to: next, auto: true, reason: patient.riskLevel },
+  });
+
+  events.emit("patient.status_changed", { patientId, status: next });
 }
 
 export const STATUS_LABELS: Record<WorkflowStatus, string> = {

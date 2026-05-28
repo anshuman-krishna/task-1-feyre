@@ -1,17 +1,16 @@
 import type { NextRequest } from "next/server";
-import { ok, fail } from "@/lib/api-response";
+import { ok } from "@/lib/api-response";
 import { withErrorHandling } from "@/server/handler";
-import { executePrediction } from "@/services/prediction";
 import { getCurrentUser } from "@/server/session";
+import { enqueuePrediction } from "@/services/queue/prediction";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 export const POST = withErrorHandling(async (_req: NextRequest, ctx: Ctx) => {
   const { id } = await ctx.params;
   const user = await getCurrentUser();
-  const outcome = await executePrediction(id, {
-    actor: user ? { id: user.id, name: user.name } : null,
+  const job = await enqueuePrediction(id, {
+    actor: user ? { id: user.id, name: user.name, organizationId: user.organizationId } : null,
   });
-  if (!outcome) return fail("prediction could not be executed", 422, "prediction_failed");
-  return ok(outcome);
+  return ok({ jobId: job.id, status: job.status }, { status: 202 });
 });

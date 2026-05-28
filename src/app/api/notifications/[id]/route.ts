@@ -1,14 +1,16 @@
 import type { NextRequest } from "next/server";
 import { ok } from "@/lib/api-response";
 import { withErrorHandling } from "@/server/handler";
-import { deleteNote } from "@/services/note";
+import { Unauthorized } from "@/lib/api-error";
+import { markRead } from "@/services/notification";
 import { getCurrentUser } from "@/server/session";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-export const DELETE = withErrorHandling(async (_req: NextRequest, ctx: Ctx) => {
+export const PATCH = withErrorHandling(async (_req: NextRequest, ctx: Ctx) => {
   const { id } = await ctx.params;
   const user = await getCurrentUser();
-  const result = await deleteNote(id, user ? { id: user.id, name: user.name, organizationId: user.organizationId } : null);
+  if (!user) throw Unauthorized();
+  const result = await markRead(user.id, [id]);
   return ok(result);
 });

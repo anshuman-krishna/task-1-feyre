@@ -18,6 +18,6 @@ export const POST = withErrorHandling(async (req: NextRequest, ctx: Ctx) => {
   const user = await getCurrentUser();
   const body = await req.json();
   const input = NoteCreateSchema.parse(body);
-  const note = await createNote(id, input, user ? { id: user.id, name: user.name } : null);
+  const note = await createNote(id, input, user ? { id: user.id, name: user.name, organizationId: user.organizationId } : null);
   return ok(note, { status: 201 });
 });

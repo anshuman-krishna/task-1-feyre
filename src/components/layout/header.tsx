@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Bell, LogOut, Menu, Search } from "lucide-react";
+import { LogOut, Menu, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -13,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar } from "@/components/avatar";
+import { NotificationBell } from "@/features/notifications/components/notification-bell";
 
 export type CurrentUser = {
   id: string;
@@ -65,9 +66,7 @@ export function Header({
       </div>
 
       <div className="ml-auto flex items-center gap-2">
-        <Button variant="ghost" size="icon" aria-label="Notifications">
-          <Bell className="h-4 w-4" />
-        </Button>
+        <NotificationBell />
 
         {user ? (
           <DropdownMenu>

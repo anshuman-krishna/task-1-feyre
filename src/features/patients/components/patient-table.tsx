@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/select";
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Avatar } from "@/components/avatar";
 import { RiskBadge } from "@/components/risk-badge";
 import { WorkflowBadge } from "@/components/workflow-badge";
@@ -25,6 +26,7 @@ import { useDebounce } from "@/hooks/use-debounce";
 import { useQueryState } from "@/hooks/use-query-state";
 import { useArchivePatient, usePatients } from "../queries";
 import { PatientRowActions } from "./patient-row-actions";
+import { BulkActionBar } from "./bulk-action-bar";
 import type { RiskLevel, WorkflowStatus } from "@prisma/client";
 
 type SortKey = "fullName" | "createdAt" | "lastPredictedAt" | "followUpAt";
@@ -48,6 +50,7 @@ export function PatientTable() {
 
   const [sort, setSort] = useState<SortKey>("createdAt");
   const [order, setOrder] = useState<"asc" | "desc">("desc");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const page = Math.max(1, Number(pageStr) || 1);
   const filters = {
@@ -182,6 +185,22 @@ export function PatientTable() {
           <Table>
             <THead>
               <TR>
+                <TH className="w-8">
+                  <Checkbox
+                    checked={rows.length > 0 && rows.every((r) => selected.has(r.id))}
+                    indeterminate={
+                      rows.some((r) => selected.has(r.id)) &&
+                      !rows.every((r) => selected.has(r.id))
+                    }
+                    onCheckedChange={(next) => {
+                      const all = new Set(selected);
+                      if (next) rows.forEach((r) => all.add(r.id));
+                      else rows.forEach((r) => all.delete(r.id));
+                      setSelected(all);
+                    }}
+                    aria-label="Select all on page"
+                  />
+                </TH>
                 <TH>
                   <SortHeader
                     label="Patient"
@@ -218,7 +237,25 @@ export function PatientTable() {
                 const followUpDue =
                   row.followUpAt != null && new Date(row.followUpAt).getTime() <= Date.now();
                 return (
-                  <TR key={row.id} className={cn(isPlaceholderData && "opacity-60")}>
+                  <TR
+                    key={row.id}
+                    className={cn(
+                      isPlaceholderData && "opacity-60",
+                      selected.has(row.id) && "bg-accent/30",
+                    )}
+                  >
+                    <TD className="w-8">
+                      <Checkbox
+                        checked={selected.has(row.id)}
+                        onCheckedChange={(next) => {
+                          const all = new Set(selected);
+                          if (next) all.add(row.id);
+                          else all.delete(row.id);
+                          setSelected(all);
+                        }}
+                        aria-label={`Select ${row.fullName}`}
+                      />
+                    </TD>
                     <TD>
                       <Link
                         href={`/patients/${row.id}`}
@@ -323,6 +360,11 @@ export function PatientTable() {
           </div>
         </>
       )}
+
+      <BulkActionBar
+        selected={Array.from(selected)}
+        onClear={() => setSelected(new Set())}
+      />
     </div>
   );
 }
