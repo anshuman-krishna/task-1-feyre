@@ -1,0 +1,137 @@
+// mira health intelligence — schema
+// designed for future multi-tenant + ai orchestration without rework
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RiskLevel {
+  low
+  moderate
+  elevated
+  critical
+}
+
+enum PredictionProvider {
+  mock
+  internal
+  openai
+  groq
+  huggingface
+}
+
+enum AuditAction {
+  create
+  update
+  archive
+  restore
+  predict
+  predict_fail
+  note_add
+  note_remove
+  export
+  view
+}
+
+model Patient {
+  id        String   @id @default(cuid())
+  fullName  String
+  email     String   @unique
+  dob       DateTime @db.Date
+  sex       String?
+
+  // diagnostic inputs — kept flat for fast list/filter
+  glucose             Float?
+  haemoglobin         Float?
+  cholesterol         Float?
+  systolic            Int?
+  diastolic           Int?
+  bmi                 Float?
+
+  // mirrored snapshot of the latest prediction (cheap list reads)
+  aiPrediction         String?
+  riskLevel            RiskLevel?
+  predictionConfidence Float?
+  lastPredictedAt      DateTime?
+
+  archivedAt DateTime?
+
+  predictions PredictionLog[]
+  notes       Note[]
+  auditLogs   AuditLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([riskLevel, archivedAt])
+  @@index([createdAt])
+  @@index([archivedAt])
+  @@map("patients")
+}
+
+model PredictionLog {
+  id        String  @id @default(cuid())
+  patientId String
+  patient   Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  provider          PredictionProvider
+  model             String?
+  riskLevel         RiskLevel
+  condition         String
+  confidence        Float
+  summary           String
+  recommendations   Json
+  observations      Json // structured biomarker observations [{label, value, status, hint}]
+
+  inputSnapshot     Json // biomarkers at time of prediction (for deltas)
+  requestPayload    Json
+  responsePayload   Json
+  latencyMs         Int
+  error             String?
+
+  createdAt DateTime @default(now())
+
+  @@index([patientId, createdAt])
+  @@index([provider])
+  @@map("prediction_logs")
+}
+
+model Note {
+  id        String  @id @default(cuid())
+  patientId String
+  patient   Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  body      String
+  author    String  @default("system")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([patientId, createdAt])
+  @@map("notes")
+}
+
+model AuditLog {
+  id          String      @id @default(cuid())
+  action      AuditAction
+  entityType  String
+  entityId    String
+  performedBy String?
+  metadata    Json?
+
+  patientId String?
+  patient   Patient? @relation(fields: [patientId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@index([patientId, createdAt])
+  @@map("audit_logs")
+}

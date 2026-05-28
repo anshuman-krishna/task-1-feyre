@@ -1,0 +1,36 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: mira-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mira
+      POSTGRES_PASSWORD: mira
+      POSTGRES_DB: mira
+    ports:
+      - "5432:5432"
+    volumes:
+      - mira-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mira -d mira"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+    container_name: mira-app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://mira:mira@db:5432/mira?schema=public
+      NEXT_PUBLIC_APP_NAME: Mira Health Intelligence
+      NEXT_PUBLIC_APP_ENV: production
+      AI_PROVIDER: mock
+    ports:
+      - "3000:3000"
+
+volumes:
+  mira-pg:

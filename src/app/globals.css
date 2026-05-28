@@ -1,0 +1,75 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 20% 99%;
+    --foreground: 222 26% 14%;
+
+    --surface: 0 0% 100%;
+    --surface-foreground: 222 26% 14%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 178 60% 38%;
+
+    --primary: 178 64% 30%;
+    --primary-foreground: 0 0% 100%;
+
+    --accent: 178 70% 95%;
+    --accent-foreground: 178 64% 22%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --risk-low: 152 60% 40%;
+    --risk-moderate: 38 92% 50%;
+    --risk-elevated: 22 90% 54%;
+    --risk-critical: 0 72% 51%;
+
+    --radius: 0.625rem;
+  }
+
+  .dark {
+    --background: 222 28% 7%;
+    --foreground: 210 20% 96%;
+
+    --surface: 222 22% 10%;
+    --surface-foreground: 210 20% 96%;
+
+    --muted: 222 18% 14%;
+    --muted-foreground: 220 10% 65%;
+
+    --border: 222 18% 18%;
+    --input: 222 18% 18%;
+    --ring: 178 60% 50%;
+
+    --primary: 178 60% 46%;
+    --primary-foreground: 222 28% 7%;
+
+    --accent: 178 40% 16%;
+    --accent-foreground: 178 70% 85%;
+  }
+
+  * {
+    @apply border-border;
+  }
+  html,
+  body {
+    @apply h-full;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+}
