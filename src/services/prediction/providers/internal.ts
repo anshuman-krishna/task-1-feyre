@@ -1,14 +1,16 @@
-import type { RiskLevel } from "@prisma/client";
 import type {
   BiomarkerObservation,
+  Contribution,
   PredictionInput,
   PredictionProviderImpl,
   PredictionResult,
 } from "../types";
+import type { RiskLevel } from "@prisma/client";
 
 // internal heuristic provider.
 // deterministic, transparent, calibrated against rough clinical ranges.
-// this is not a diagnostic tool — it surfaces signals worth a clinician's eye.
+// not a diagnostic tool — surfaces signals worth a clinician's eye,
+// and now reports per-biomarker contributions so the UI can explain itself.
 
 type Finding = { obs: BiomarkerObservation; condition?: string; score: number };
 
@@ -178,8 +180,21 @@ function deriveRecommendations(findings: Finding[], risk: RiskLevel): string[] {
 }
 
 function deriveConfidence(provided: number): number {
-  // confidence grows with coverage. 6 biomarkers → ~0.9 ceiling
   return Math.min(0.95, 0.55 + provided * 0.06);
+}
+
+function deriveContributions(findings: Finding[]): Contribution[] {
+  const total = findings.reduce((s, f) => s + f.score, 0);
+  if (total === 0) {
+    return findings.map((f) => ({ label: f.obs.label, weight: 0, direction: "neutral" as const }));
+  }
+  return findings
+    .map((f) => ({
+      label: f.obs.label,
+      weight: Math.round((f.score / total) * 100) / 100,
+      direction: (f.score > 0 ? "up" : "neutral") as "up" | "neutral",
+    }))
+    .sort((a, b) => b.weight - a.weight);
 }
 
 export const internalProvider: PredictionProviderImpl = {
@@ -205,15 +220,15 @@ export const internalProvider: PredictionProviderImpl = {
     const totalScore = findings.reduce((s, f) => s + f.score, 0);
     const risk = deriveRisk(totalScore, findings);
     const condition = deriveCondition(findings);
-    const confidence = deriveConfidence(provided);
 
     return {
       riskLevel: risk,
       condition,
-      confidence,
+      confidence: deriveConfidence(provided),
       summary: deriveSummary(findings, risk, condition),
       recommendations: deriveRecommendations(findings, risk),
       observations: findings.map((f) => f.obs),
+      contributions: deriveContributions(findings),
     };
   },
 };

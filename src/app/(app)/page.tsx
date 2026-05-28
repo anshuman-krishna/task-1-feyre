@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { Heart, ShieldAlert, Sparkles, Users } from "lucide-react";
+import { CalendarClock, Heart, ShieldAlert, Sparkles, Users } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { MetricCard } from "@/components/metric-card";
 import { Button } from "@/components/ui/button";
 import { HighRiskPanel } from "@/features/dashboard/components/high-risk-panel";
 import { PredictionOverview } from "@/features/dashboard/components/prediction-overview";
+import { AlertsPanel } from "@/features/dashboard/components/alerts-panel";
 import { ActivityFeed } from "@/features/activity/components/activity-feed";
 import { dashboardSummary } from "@/services/analytics";
 import { listActivity } from "@/services/activity";
@@ -23,8 +24,8 @@ export default async function DashboardPage() {
         description="What's happening across the clinic, summarised by the intelligence layer."
         actions={
           <>
-            <Button variant="outline" size="sm" disabled>
-              Export
+            <Button asChild variant="outline" size="sm">
+              <a href="/api/patients/export">Export CSV</a>
             </Button>
             <Button asChild size="sm">
               <Link href="/patients/new">New patient</Link>
@@ -33,7 +34,7 @@ export default async function DashboardPage() {
         }
       />
 
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <MetricCard
           label="Active patients"
           value={summary.activePatients}
@@ -60,6 +61,12 @@ export default async function DashboardPage() {
           icon={<ShieldAlert className="h-4 w-4" />}
         />
         <MetricCard
+          label="Follow-ups due"
+          value={summary.followUpBacklog}
+          hint="overdue today"
+          icon={<CalendarClock className="h-4 w-4" />}
+        />
+        <MetricCard
           label="Avg. confidence"
           value={summary.avgConfidence ? `${(summary.avgConfidence * 100).toFixed(0)}%` : "—"}
           hint="across active patients"
@@ -73,6 +80,7 @@ export default async function DashboardPage() {
           <HighRiskPanel />
         </div>
         <div className="space-y-4">
+          <AlertsPanel />
           <ActivityFeed entries={activityEntries} />
         </div>
       </section>

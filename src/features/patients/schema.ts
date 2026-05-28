@@ -1,6 +1,13 @@
 import { z } from "zod";
 
 export const RiskLevelSchema = z.enum(["low", "moderate", "elevated", "critical"]);
+export const WorkflowStatusSchema = z.enum([
+  "new_patient",
+  "monitoring",
+  "follow_up_needed",
+  "stable",
+  "urgent_review",
+]);
 
 const optionalNumber = z
   .union([z.number(), z.string()])
@@ -19,16 +26,24 @@ export const PatientCreateSchema = z.object({
   systolic: optionalNumber.optional().nullable(),
   diastolic: optionalNumber.optional().nullable(),
   bmi: optionalNumber.optional().nullable(),
+
+  assignedToId: z.string().optional().nullable(),
 });
 
-export const PatientUpdateSchema = PatientCreateSchema.partial();
+export const PatientUpdateSchema = PatientCreateSchema.partial().extend({
+  status: WorkflowStatusSchema.optional(),
+  followUpAt: z.string().nullable().optional(),
+});
 
 export const PatientQuerySchema = z.object({
   q: z.string().trim().optional(),
   risk: RiskLevelSchema.optional(),
+  status: WorkflowStatusSchema.optional(),
+  assignedTo: z.string().optional(),
+  followUpDue: z.coerce.boolean().optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
-  sort: z.enum(["createdAt", "fullName", "lastPredictedAt"]).default("createdAt"),
+  sort: z.enum(["createdAt", "fullName", "lastPredictedAt", "followUpAt"]).default("createdAt"),
   order: z.enum(["asc", "desc"]).default("desc"),
   includeArchived: z.coerce.boolean().default(false),
 });

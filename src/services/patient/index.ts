@@ -1,8 +1,9 @@
-import type { Prisma } from "@prisma/client";
+import type { Prisma, WorkflowStatus } from "@prisma/client";
 import { prisma } from "@/server/prisma";
 import { NotFound, Conflict } from "@/lib/api-error";
-import { logAudit } from "@/services/audit";
+import { logAudit, type Actor } from "@/services/audit";
 import { executePrediction, hasBiomarkers } from "@/services/prediction";
+import { shouldAutoTransition, suggestFollowUp, suggestStatus } from "@/services/workflow";
 import type {
   PatientCreateInput,
   PatientUpdateInput,
@@ -22,6 +23,9 @@ export async function listPatients(q: PatientQuery) {
   const where: Prisma.PatientWhereInput = {
     archivedAt: q.includeArchived ? undefined : null,
     riskLevel: q.risk,
+    status: q.status,
+    assignedToId: q.assignedTo,
+    ...(q.followUpDue ? { followUpAt: { lte: new Date() } } : {}),
     ...(q.q
       ? {
           OR: [
@@ -39,6 +43,7 @@ export async function listPatients(q: PatientQuery) {
       orderBy: { [q.sort]: q.order },
       skip: (q.page - 1) * q.pageSize,
       take: q.pageSize,
+      include: { assignedTo: { select: { id: true, name: true, avatarHue: true } } },
     }),
     prisma.patient.count({ where }),
   ]);
@@ -47,12 +52,15 @@ export async function listPatients(q: PatientQuery) {
 }
 
 export async function getPatient(id: string) {
-  const patient = await prisma.patient.findUnique({ where: { id } });
+  const patient = await prisma.patient.findUnique({
+    where: { id },
+    include: { assignedTo: true },
+  });
   if (!patient || patient.archivedAt) throw NotFound("patient");
   return patient;
 }
 
-export async function createPatient(input: PatientCreateInput, performedBy?: string) {
+export async function createPatient(input: PatientCreateInput, actor?: Actor) {
   const existing = await prisma.patient.findUnique({ where: { email: input.email } });
   if (existing) throw Conflict("a patient with this email already exists");
 
@@ -68,6 +76,7 @@ export async function createPatient(input: PatientCreateInput, performedBy?: str
       systolic: input.systolic ?? null,
       diastolic: input.diastolic ?? null,
       bmi: input.bmi ?? null,
+      assignedToId: input.assignedToId ?? actor?.id ?? null,
     },
   });
 
@@ -76,31 +85,37 @@ export async function createPatient(input: PatientCreateInput, performedBy?: str
     entityType: "patient",
     entityId: patient.id,
     patientId: patient.id,
-    performedBy,
+    actor,
     metadata: { fullName: patient.fullName },
   });
 
-  // run prediction inline if biomarkers were provided. errors are absorbed
-  // by executePrediction so the create still succeeds.
   if (hasBiomarkers(patient)) {
-    await executePrediction(patient.id, { performedBy });
+    await executePrediction(patient.id, { actor });
+    await autoTransitionFromLatest(patient.id, actor);
   }
 
-  return prisma.patient.findUnique({ where: { id: patient.id } });
+  return prisma.patient.findUnique({
+    where: { id: patient.id },
+    include: { assignedTo: true },
+  });
 }
 
-export async function updatePatient(
-  id: string,
-  input: PatientUpdateInput,
-  performedBy?: string,
-) {
+export async function updatePatient(id: string, input: PatientUpdateInput, actor?: Actor) {
   const previous = await getPatient(id);
 
-  const patient = await prisma.patient.update({
+  const statusChanged = input.status !== undefined && input.status !== previous.status;
+  const assigneeChanged =
+    input.assignedToId !== undefined && input.assignedToId !== previous.assignedToId;
+
+  const { followUpAt, ...rest } = input;
+  await prisma.patient.update({
     where: { id },
     data: {
-      ...input,
+      ...rest,
       dob: input.dob ? new Date(input.dob) : undefined,
+      followUpAt:
+        followUpAt === undefined ? undefined : followUpAt === null ? null : new Date(followUpAt),
+      reviewedAt: statusChanged || assigneeChanged ? new Date() : undefined,
     },
   });
 
@@ -109,21 +124,48 @@ export async function updatePatient(
     entityType: "patient",
     entityId: id,
     patientId: id,
-    performedBy,
+    actor,
     metadata: { fields: Object.keys(input) },
   });
+
+  if (statusChanged && input.status) {
+    await logAudit({
+      action: "status_change",
+      entityType: "patient",
+      entityId: id,
+      patientId: id,
+      actor,
+      metadata: { from: previous.status, to: input.status },
+    });
+  }
+
+  if (assigneeChanged) {
+    await logAudit({
+      action: "assign",
+      entityType: "patient",
+      entityId: id,
+      patientId: id,
+      actor,
+      metadata: { from: previous.assignedToId, to: input.assignedToId },
+    });
+  }
 
   const biomarkersChanged = BIOMARKER_FIELDS.some(
     (f) => input[f] !== undefined && input[f] !== previous[f],
   );
-  if (biomarkersChanged && hasBiomarkers(patient)) {
-    await executePrediction(id, { performedBy });
+  const fresh = await prisma.patient.findUnique({ where: { id }, include: { assignedTo: true } });
+  if (biomarkersChanged && fresh && hasBiomarkers(fresh)) {
+    await executePrediction(id, { actor });
+    await autoTransitionFromLatest(id, actor);
   }
 
-  return prisma.patient.findUnique({ where: { id } });
+  return prisma.patient.findUnique({
+    where: { id },
+    include: { assignedTo: true },
+  });
 }
 
-export async function archivePatient(id: string, performedBy?: string) {
+export async function archivePatient(id: string, actor?: Actor) {
   await getPatient(id);
   const patient = await prisma.patient.update({
     where: { id },
@@ -134,7 +176,31 @@ export async function archivePatient(id: string, performedBy?: string) {
     entityType: "patient",
     entityId: id,
     patientId: id,
-    performedBy,
+    actor,
   });
   return patient;
+}
+
+// nudge the workflow status when the patient hasn't been triaged yet
+async function autoTransitionFromLatest(patientId: string, actor?: Actor) {
+  const patient = await prisma.patient.findUnique({ where: { id: patientId } });
+  if (!patient?.riskLevel) return;
+  if (!shouldAutoTransition(patient.status)) return;
+
+  const next: WorkflowStatus = suggestStatus(patient.riskLevel);
+  const followUpAt = suggestFollowUp(patient.riskLevel);
+  if (next === patient.status && !followUpAt) return;
+
+  await prisma.patient.update({
+    where: { id: patientId },
+    data: { status: next, followUpAt },
+  });
+  await logAudit({
+    action: "status_change",
+    entityType: "patient",
+    entityId: patientId,
+    patientId,
+    actor,
+    metadata: { from: patient.status, to: next, auto: true, reason: patient.riskLevel },
+  });
 }

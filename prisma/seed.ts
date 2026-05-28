@@ -18,7 +18,39 @@ type Seed = {
   note?: string;
 };
 
-// hand-crafted distribution: a believable clinic caseload, not random noise
+const users = [
+  {
+    id: "u_reyes",
+    name: "Dr. Maria Reyes",
+    email: "maria.reyes@mira.health",
+    role: "admin" as const,
+    avatarHue: 178,
+  },
+  {
+    id: "u_park",
+    name: "Dr. Jamal Park",
+    email: "jamal.park@mira.health",
+    role: "clinician" as const,
+    avatarHue: 22,
+  },
+  {
+    id: "u_okonkwo",
+    name: "Dr. Lena Okonkwo",
+    email: "lena.okonkwo@mira.health",
+    role: "clinician" as const,
+    avatarHue: 270,
+  },
+  {
+    id: "u_singh",
+    name: "Priya Singh",
+    email: "priya.singh@mira.health",
+    role: "analyst" as const,
+    avatarHue: 150,
+  },
+];
+
+const clinicianIds = ["u_reyes", "u_park", "u_okonkwo"];
+
 const seeds: Seed[] = [
   {
     fullName: "Naomi Carter",
@@ -262,21 +294,26 @@ const seeds: Seed[] = [
 ];
 
 async function main() {
-  // wipe existing demo data
   await prisma.note.deleteMany();
   await prisma.predictionLog.deleteMany();
   await prisma.auditLog.deleteMany();
   await prisma.patient.deleteMany();
+  await prisma.user.deleteMany();
+
+  console.log(`seeding ${users.length} users…`);
+  for (const u of users) {
+    await prisma.user.create({ data: u });
+  }
 
   console.log(`seeding ${seeds.length} patients…`);
-
-  // stagger createdAt across the last ~70 days so growth charts look real
   const now = Date.now();
   const dayMs = 24 * 60 * 60 * 1000;
 
   for (let i = 0; i < seeds.length; i++) {
     const s = seeds[i]!;
     const createdAt = new Date(now - (seeds.length - i) * 3.2 * dayMs);
+    const assignedToId = clinicianIds[i % clinicianIds.length]!;
+    const assignedActor = users.find((u) => u.id === assignedToId)!;
 
     const patient = await prisma.patient.create({
       data: {
@@ -290,6 +327,7 @@ async function main() {
         systolic: s.systolic,
         diastolic: s.diastolic,
         bmi: s.bmi,
+        assignedToId,
         createdAt,
         updatedAt: createdAt,
       },
@@ -300,7 +338,7 @@ async function main() {
       entityType: "patient",
       entityId: patient.id,
       patientId: patient.id,
-      performedBy: "seed",
+      actor: { id: assignedActor.id, name: assignedActor.name },
     });
 
     if (s.note) {
@@ -308,7 +346,7 @@ async function main() {
         data: {
           patientId: patient.id,
           body: s.note,
-          author: "Dr. Reyes",
+          author: assignedActor.name,
           createdAt: new Date(createdAt.getTime() + dayMs),
         },
       });
@@ -317,14 +355,44 @@ async function main() {
         entityType: "note",
         entityId: note.id,
         patientId: patient.id,
-        performedBy: "Dr. Reyes",
+        actor: { id: assignedActor.id, name: assignedActor.name },
       });
     }
 
-    await executePrediction(patient.id, { performedBy: "seed" });
+    await executePrediction(patient.id, {
+      actor: { id: assignedActor.id, name: assignedActor.name },
+    });
+  }
+
+  // run the patient service "auto transition" effect by replaying the
+  // workflow logic against the post-prediction state so statuses + follow-ups
+  // are realistic in the seeded fixture.
+  const all = await prisma.patient.findMany();
+  for (const p of all) {
+    if (!p.riskLevel) continue;
+    const status =
+      p.riskLevel === "critical"
+        ? "urgent_review"
+        : p.riskLevel === "elevated"
+          ? "follow_up_needed"
+          : p.riskLevel === "moderate"
+            ? "monitoring"
+            : "stable";
+    const days = p.riskLevel === "critical" ? 1 : p.riskLevel === "elevated" ? 7 : p.riskLevel === "moderate" ? 30 : null;
+    await prisma.patient.update({
+      where: { id: p.id },
+      data: {
+        status,
+        followUpAt: days == null ? null : new Date(Date.now() + days * dayMs),
+        // backdate review for ~half the seed set so the dashboard alert
+        // surfaces the rest as "stale"
+        reviewedAt: p.fullName.length % 2 === 0 ? new Date(Date.now() - 3 * dayMs) : null,
+      },
+    });
   }
 
   console.log("✓ seed complete");
+  console.log("→ sign in at /sign-in using any of the seeded accounts");
 }
 
 main()

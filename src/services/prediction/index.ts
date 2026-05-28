@@ -1,6 +1,8 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/prisma";
-import { logAudit } from "@/services/audit";
+import { logAudit, type Actor } from "@/services/audit";
+import { log } from "@/server/logger";
+import { metrics } from "@/server/metrics";
 import { ageFromDob } from "@/lib/format";
 import { getProvider } from "./providers";
 import { normalize } from "./normalize";
@@ -21,7 +23,7 @@ export function hasBiomarkers(b: Biomarkers) {
 
 type ExecuteOpts = {
   providerName?: string;
-  performedBy?: string;
+  actor?: Actor;
 };
 
 // run a prediction for a patient. always writes a prediction_log + audit row.
@@ -53,7 +55,7 @@ export async function executePrediction(patientId: string, opts: ExecuteOpts = {
     const result = normalize(raw);
     const latencyMs = Date.now() - startedAt;
 
-    const [log] = await prisma.$transaction([
+    const [logRow] = await prisma.$transaction([
       prisma.predictionLog.create({
         data: {
           patientId,
@@ -63,8 +65,9 @@ export async function executePrediction(patientId: string, opts: ExecuteOpts = {
           condition: result.condition,
           confidence: result.confidence,
           summary: result.summary,
-          recommendations: result.recommendations as Prisma.InputJsonValue,
+          recommendations: result.recommendations as unknown as Prisma.InputJsonValue,
           observations: result.observations as unknown as Prisma.InputJsonValue,
+          contributions: result.contributions as unknown as Prisma.InputJsonValue,
           inputSnapshot: inputSnapshot as unknown as Prisma.InputJsonValue,
           requestPayload: requestPayload as unknown as Prisma.InputJsonValue,
           responsePayload: result as unknown as Prisma.InputJsonValue,
@@ -82,21 +85,33 @@ export async function executePrediction(patientId: string, opts: ExecuteOpts = {
       }),
     ]);
 
+    metrics.inc("predictions_total", { provider: provider.name, risk: result.riskLevel });
+    metrics.observe("prediction_latency_ms", latencyMs, { provider: provider.name });
+    log.info("prediction.ok", {
+      patientId,
+      provider: provider.name,
+      risk: result.riskLevel,
+      confidence: result.confidence,
+      latencyMs,
+    });
+
     await logAudit({
       action: "predict",
       entityType: "patient",
       entityId: patientId,
       patientId,
-      performedBy: opts.performedBy,
+      actor: opts.actor,
       metadata: { provider: provider.name, riskLevel: result.riskLevel, latencyMs },
     });
 
-    return { result, log };
+    return { result, log: logRow };
   } catch (err) {
     const latencyMs = Date.now() - startedAt;
     const message = err instanceof Error ? err.message : "unknown provider error";
 
-    // best-effort log of the failed attempt
+    metrics.inc("predictions_failed", { provider: provider.name });
+    log.error("prediction.fail", { patientId, provider: provider.name, message, latencyMs });
+
     try {
       await prisma.predictionLog.create({
         data: {
@@ -109,6 +124,7 @@ export async function executePrediction(patientId: string, opts: ExecuteOpts = {
           summary: message,
           recommendations: [] as unknown as Prisma.InputJsonValue,
           observations: [] as unknown as Prisma.InputJsonValue,
+          contributions: [] as unknown as Prisma.InputJsonValue,
           inputSnapshot: inputSnapshot as unknown as Prisma.InputJsonValue,
           requestPayload: requestPayload as unknown as Prisma.InputJsonValue,
           responsePayload: { error: message } as unknown as Prisma.InputJsonValue,
@@ -117,7 +133,7 @@ export async function executePrediction(patientId: string, opts: ExecuteOpts = {
         },
       });
     } catch {
-      // swallow — never let log noise mask the real error
+      // swallow
     }
 
     await logAudit({
@@ -125,7 +141,7 @@ export async function executePrediction(patientId: string, opts: ExecuteOpts = {
       entityType: "patient",
       entityId: patientId,
       patientId,
-      performedBy: opts.performedBy,
+      actor: opts.actor,
       metadata: {
         provider: provider.name,
         message,

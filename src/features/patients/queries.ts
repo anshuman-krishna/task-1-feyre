@@ -9,12 +9,14 @@ import {
 import { fetcher } from "@/lib/fetcher";
 import type { PatientCreateInput } from "./schema";
 import type { PatientListResponse, PatientRow } from "./types";
+import type { RiskLevel, WorkflowStatus } from "@prisma/client";
 
 export type PatientFilters = {
   q?: string;
-  risk?: "low" | "moderate" | "elevated" | "critical";
+  risk?: RiskLevel;
+  status?: WorkflowStatus;
   page?: number;
-  sort?: "createdAt" | "fullName" | "lastPredictedAt";
+  sort?: "createdAt" | "fullName" | "lastPredictedAt" | "followUpAt";
   order?: "asc" | "desc";
 };
 
@@ -22,6 +24,7 @@ function buildQuery(f: PatientFilters) {
   const p = new URLSearchParams();
   if (f.q) p.set("q", f.q);
   if (f.risk) p.set("risk", f.risk);
+  if (f.status) p.set("status", f.status);
   if (f.page) p.set("page", String(f.page));
   if (f.sort) p.set("sort", f.sort);
   if (f.order) p.set("order", f.order);
@@ -50,6 +53,22 @@ export function useCreatePatient() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["patients"] });
       qc.invalidateQueries({ queryKey: ["analytics"] });
+    },
+  });
+}
+
+export function useUpdatePatient() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string; input: Partial<PatientCreateInput> & { status?: WorkflowStatus; assignedToId?: string | null } }) =>
+      fetcher<PatientRow>(`/api/patients/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: ["patients"] });
+      qc.invalidateQueries({ queryKey: ["patient", vars.id] });
+      qc.invalidateQueries({ queryKey: ["activity"] });
     },
   });
 }

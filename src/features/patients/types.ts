@@ -1,4 +1,6 @@
-import type { RiskLevel } from "@prisma/client";
+import type { RiskLevel, WorkflowStatus } from "@prisma/client";
+
+export type AssignedUser = { id: string; name: string; avatarHue: number };
 
 export type PatientRow = {
   id: string;
@@ -16,6 +18,11 @@ export type PatientRow = {
   predictionConfidence: number | null;
   aiPrediction: string | null;
   lastPredictedAt: string | null;
+  status: WorkflowStatus;
+  assignedToId: string | null;
+  assignedTo: AssignedUser | null;
+  followUpAt: string | null;
+  reviewedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };

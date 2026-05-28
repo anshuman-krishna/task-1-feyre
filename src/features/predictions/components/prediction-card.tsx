@@ -1,6 +1,6 @@
 "use client";
 
-import { Sparkles, Activity } from "lucide-react";
+import { Sparkles, Activity, Clock, Cpu } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -11,6 +11,7 @@ import { formatDateTime } from "@/lib/format";
 import { useRunPrediction } from "@/features/patients/queries";
 import { toast } from "sonner";
 import { ConfidenceMeter } from "./confidence-meter";
+import { ContributionBars } from "./contribution-bars";
 
 type Observation = {
   label: string;
@@ -18,6 +19,8 @@ type Observation = {
   status: "ok" | "watch" | "elevated" | "critical";
   hint: string;
 };
+
+type Contribution = { label: string; weight: number; direction: "up" | "neutral" };
 
 type LatestPrediction = {
   id: string;
@@ -27,8 +30,10 @@ type LatestPrediction = {
   summary: string;
   recommendations: string[];
   observations: Observation[];
+  contributions: Contribution[];
   provider: string;
   model: string | null;
+  latencyMs: number;
   createdAt: string;
 } | null;
 
@@ -70,13 +75,13 @@ export function PredictionCard({
           </CardTitle>
           <CardDescription>
             {latest
-              ? `${latest.provider}${latest.model ? ` · ${latest.model}` : ""} · ${formatDateTime(latest.createdAt)}`
+              ? "Explainable risk assessment derived from biomarkers."
               : "Run the prediction engine to generate observations."}
           </CardDescription>
         </div>
         <Button size="sm" onClick={onRun} disabled={run.isPending || !hasBiomarkers}>
           <Activity className={cn("h-3.5 w-3.5", run.isPending && "animate-pulse")} />
-          {run.isPending ? "Running…" : "Run prediction"}
+          {run.isPending ? "Running…" : "Re-run"}
         </Button>
       </CardHeader>
 
@@ -92,6 +97,13 @@ export function PredictionCard({
               <ConfidenceMeter value={latest.confidence} className="w-40" />
             </div>
           </div>
+
+          {latest.contributions.length > 0 && (
+            <>
+              <Separator />
+              <ContributionBars items={latest.contributions} />
+            </>
+          )}
 
           {latest.observations.length > 0 && (
             <>
@@ -145,6 +157,19 @@ export function PredictionCard({
               </div>
             </>
           )}
+
+          <Separator />
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+            <span className="inline-flex items-center gap-1">
+              <Cpu className="h-3 w-3" />
+              {latest.provider}
+              {latest.model ? ` · ${latest.model}` : ""}
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <Clock className="h-3 w-3" />
+              {latest.latencyMs}ms · {formatDateTime(latest.createdAt)}
+            </span>
+          </div>
 
           <p className="rounded-md bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
             AI-generated observation. Not a medical diagnosis — review with a qualified clinician.

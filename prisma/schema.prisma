@@ -37,6 +37,41 @@ enum AuditAction {
   note_remove
   export
   view
+  assign
+  status_change
+  sign_in
+  sign_out
+}
+
+enum Role {
+  admin
+  clinician
+  analyst
+}
+
+enum WorkflowStatus {
+  new_patient        @map("new")
+  monitoring
+  follow_up_needed
+  stable
+  urgent_review
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  role      Role     @default(clinician)
+  avatarHue Int      @default(180)
+  archivedAt DateTime?
+
+  assignedPatients Patient[]  @relation("AssignedClinician")
+  auditLogs        AuditLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
 }
 
 model Patient {
@@ -46,7 +81,7 @@ model Patient {
   dob       DateTime @db.Date
   sex       String?
 
-  // diagnostic inputs — kept flat for fast list/filter
+  // diagnostic inputs
   glucose             Float?
   haemoglobin         Float?
   cholesterol         Float?
@@ -60,6 +95,13 @@ model Patient {
   predictionConfidence Float?
   lastPredictedAt      DateTime?
 
+  // workflow
+  status        WorkflowStatus @default(new_patient)
+  assignedToId  String?
+  assignedTo    User?          @relation("AssignedClinician", fields: [assignedToId], references: [id], onDelete: SetNull)
+  followUpAt    DateTime?
+  reviewedAt    DateTime?
+
   archivedAt DateTime?
 
   predictions PredictionLog[]
@@ -70,6 +112,9 @@ model Patient {
   updatedAt DateTime @updatedAt
 
   @@index([riskLevel, archivedAt])
+  @@index([status, archivedAt])
+  @@index([assignedToId])
+  @@index([followUpAt])
   @@index([createdAt])
   @@index([archivedAt])
   @@map("patients")
@@ -80,20 +125,21 @@ model PredictionLog {
   patientId String
   patient   Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
 
-  provider          PredictionProvider
-  model             String?
-  riskLevel         RiskLevel
-  condition         String
-  confidence        Float
-  summary           String
-  recommendations   Json
-  observations      Json // structured biomarker observations [{label, value, status, hint}]
+  provider        PredictionProvider
+  model           String?
+  riskLevel       RiskLevel
+  condition       String
+  confidence      Float
+  summary         String
+  recommendations Json
+  observations    Json
+  contributions   Json // [{ label, weight: 0..1, direction: 'up'|'neutral' }]
 
-  inputSnapshot     Json // biomarkers at time of prediction (for deltas)
-  requestPayload    Json
-  responsePayload   Json
-  latencyMs         Int
-  error             String?
+  inputSnapshot   Json
+  requestPayload  Json
+  responsePayload Json
+  latencyMs       Int
+  error           String?
 
   createdAt DateTime @default(now())
 
@@ -125,6 +171,9 @@ model AuditLog {
   performedBy String?
   metadata    Json?
 
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
   patientId String?
   patient   Patient? @relation(fields: [patientId], references: [id], onDelete: SetNull)
 
@@ -133,5 +182,6 @@ model AuditLog {
   @@index([entityType, entityId])
   @@index([createdAt])
   @@index([patientId, createdAt])
+  @@index([userId, createdAt])
   @@map("audit_logs")
 }

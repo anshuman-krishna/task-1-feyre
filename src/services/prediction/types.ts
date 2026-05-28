@@ -21,6 +21,12 @@ export type BiomarkerObservation = {
   hint: string;
 };
 
+export type Contribution = {
+  label: string;
+  weight: number; // 0..1, normalised share of total risk score
+  direction: "up" | "neutral";
+};
+
 export type PredictionResult = {
   riskLevel: RiskLevel;
   condition: string;
@@ -28,6 +34,7 @@ export type PredictionResult = {
   summary: string;
   recommendations: string[];
   observations: BiomarkerObservation[];
+  contributions: Contribution[];
 };
 
 export interface PredictionProviderImpl {

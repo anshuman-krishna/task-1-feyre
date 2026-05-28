@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ArrowDown, ArrowUp, Search, UserPlus } from "lucide-react";
+import { ArrowDown, ArrowUp, Download, Search, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +15,9 @@ import {
 } from "@/components/ui/select";
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Avatar } from "@/components/avatar";
 import { RiskBadge } from "@/components/risk-badge";
+import { WorkflowBadge } from "@/components/workflow-badge";
 import { EmptyState } from "@/components/empty-state";
 import { ageFromDob, formatDate, initials, relativeTime } from "@/lib/format";
 import { cn } from "@/lib/cn";
@@ -23,15 +25,16 @@ import { useDebounce } from "@/hooks/use-debounce";
 import { useQueryState } from "@/hooks/use-query-state";
 import { useArchivePatient, usePatients } from "../queries";
 import { PatientRowActions } from "./patient-row-actions";
-import type { RiskLevel } from "@prisma/client";
+import type { RiskLevel, WorkflowStatus } from "@prisma/client";
 
-type SortKey = "fullName" | "createdAt" | "lastPredictedAt";
+type SortKey = "fullName" | "createdAt" | "lastPredictedAt" | "followUpAt";
 
 const PAGE_SIZE = 12;
 
 export function PatientTable() {
   const [search, setSearch] = useQueryState("q");
   const [risk, setRisk] = useQueryState("risk");
+  const [status, setStatus] = useQueryState("status");
   const [pageStr, setPage] = useQueryState("page");
   const [input, setInput] = useState(search);
   const debouncedInput = useDebounce(input, 250);
@@ -50,6 +53,7 @@ export function PatientTable() {
   const filters = {
     q: search || undefined,
     risk: (risk || undefined) as RiskLevel | undefined,
+    status: (status || undefined) as WorkflowStatus | undefined,
     page,
     sort,
     order,
@@ -101,23 +105,49 @@ export function PatientTable() {
               setPage(null);
             }}
           >
-            <SelectTrigger className="w-full sm:w-40">
+            <SelectTrigger className="w-full sm:w-36">
               <SelectValue placeholder="All risk" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All risk levels</SelectItem>
+              <SelectItem value="all">All risk</SelectItem>
               <SelectItem value="low">Low</SelectItem>
               <SelectItem value="moderate">Moderate</SelectItem>
               <SelectItem value="elevated">Elevated</SelectItem>
               <SelectItem value="critical">Critical</SelectItem>
             </SelectContent>
           </Select>
+          <Select
+            value={status || "all"}
+            onValueChange={(v) => {
+              setStatus(v === "all" ? null : v);
+              setPage(null);
+            }}
+          >
+            <SelectTrigger className="w-full sm:w-44">
+              <SelectValue placeholder="All statuses" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="urgent_review">Urgent review</SelectItem>
+              <SelectItem value="follow_up_needed">Follow-up needed</SelectItem>
+              <SelectItem value="monitoring">Monitoring</SelectItem>
+              <SelectItem value="new_patient">New</SelectItem>
+              <SelectItem value="stable">Stable</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
-        <Button asChild size="sm">
-          <Link href="/patients/new">
-            <UserPlus className="h-3.5 w-3.5" /> Add patient
-          </Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button asChild variant="outline" size="sm">
+            <a href="/api/patients/export">
+              <Download className="h-3.5 w-3.5" /> Export CSV
+            </a>
+          </Button>
+          <Button asChild size="sm">
+            <Link href="/patients/new">
+              <UserPlus className="h-3.5 w-3.5" /> Add patient
+            </Link>
+          </Button>
+        </div>
       </div>
 
       {isLoading ? (
@@ -130,14 +160,14 @@ export function PatientTable() {
         <div className="p-6">
           <EmptyState
             icon={<Search className="h-4 w-4" />}
-            title={search || risk ? "No patients match this view" : "No patients yet"}
+            title={search || risk || status ? "No patients match this view" : "No patients yet"}
             description={
-              search || risk
-                ? "Try clearing the search or risk filter."
+              search || risk || status
+                ? "Try clearing the search or filters."
                 : "Add your first patient to start running predictions."
             }
             action={
-              !search && !risk ? (
+              !search && !risk && !status ? (
                 <Button asChild size="sm">
                   <Link href="/patients/new">
                     <UserPlus className="h-3.5 w-3.5" /> Add patient
@@ -160,10 +190,18 @@ export function PatientTable() {
                     onClick={() => toggleSort("fullName")}
                   />
                 </TH>
-                <TH className="hidden md:table-cell">Age</TH>
-                <TH className="hidden lg:table-cell">AI observation</TH>
+                <TH className="hidden md:table-cell">Status</TH>
                 <TH>Risk</TH>
+                <TH className="hidden lg:table-cell">Assigned</TH>
                 <TH className="hidden md:table-cell">Confidence</TH>
+                <TH className="hidden xl:table-cell">
+                  <SortHeader
+                    label="Follow-up"
+                    active={sort === "followUpAt"}
+                    order={order}
+                    onClick={() => toggleSort("followUpAt")}
+                  />
+                </TH>
                 <TH className="hidden xl:table-cell">
                   <SortHeader
                     label="Last predicted"
@@ -172,70 +210,91 @@ export function PatientTable() {
                     onClick={() => toggleSort("lastPredictedAt")}
                   />
                 </TH>
-                <TH className="hidden xl:table-cell">
-                  <SortHeader
-                    label="Created"
-                    active={sort === "createdAt"}
-                    order={order}
-                    onClick={() => toggleSort("createdAt")}
-                  />
-                </TH>
                 <TH className="w-10" />
               </TR>
             </THead>
             <TBody>
-              {rows.map((row) => (
-                <TR key={row.id} className={cn(isPlaceholderData && "opacity-60")}>
-                  <TD>
-                    <Link
-                      href={`/patients/${row.id}`}
-                      className="flex items-center gap-3 hover:underline"
-                    >
-                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-accent text-[10px] font-semibold text-accent-foreground">
-                        {initials(row.fullName)}
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block truncate text-sm font-medium text-foreground">
-                          {row.fullName}
+              {rows.map((row) => {
+                const followUpDue =
+                  row.followUpAt != null && new Date(row.followUpAt).getTime() <= Date.now();
+                return (
+                  <TR key={row.id} className={cn(isPlaceholderData && "opacity-60")}>
+                    <TD>
+                      <Link
+                        href={`/patients/${row.id}`}
+                        className="flex items-center gap-3 hover:underline"
+                      >
+                        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-accent text-[10px] font-semibold text-accent-foreground">
+                          {initials(row.fullName)}
                         </span>
-                        <span className="block truncate text-xs text-muted-foreground">
-                          {row.email}
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-medium text-foreground">
+                            {row.fullName}
+                          </span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {ageFromDob(row.dob)} · {row.email}
+                          </span>
                         </span>
-                      </span>
-                    </Link>
-                  </TD>
-                  <TD className="hidden text-sm text-muted-foreground md:table-cell">
-                    {ageFromDob(row.dob)}
-                  </TD>
-                  <TD className="hidden text-sm text-muted-foreground lg:table-cell">
-                    {row.aiPrediction ?? "—"}
-                  </TD>
-                  <TD>
-                    <RiskBadge level={row.riskLevel} />
-                  </TD>
-                  <TD className="hidden md:table-cell">
-                    {row.predictionConfidence != null ? (
-                      <span className="font-mono text-xs text-muted-foreground">
-                        {(row.predictionConfidence * 100).toFixed(0)}%
-                      </span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    )}
-                  </TD>
-                  <TD className="hidden text-xs text-muted-foreground xl:table-cell">
-                    {row.lastPredictedAt ? relativeTime(row.lastPredictedAt) : "—"}
-                  </TD>
-                  <TD className="hidden text-xs text-muted-foreground xl:table-cell">
-                    {formatDate(row.createdAt)}
-                  </TD>
-                  <TD className="text-right">
-                    <PatientRowActions
-                      id={row.id}
-                      onArchive={() => onArchive(row.id, row.fullName)}
-                    />
-                  </TD>
-                </TR>
-              ))}
+                      </Link>
+                    </TD>
+                    <TD className="hidden md:table-cell">
+                      <WorkflowBadge status={row.status} />
+                    </TD>
+                    <TD>
+                      <RiskBadge level={row.riskLevel} />
+                    </TD>
+                    <TD className="hidden lg:table-cell">
+                      {row.assignedTo ? (
+                        <span className="flex items-center gap-2">
+                          <Avatar
+                            name={row.assignedTo.name}
+                            hue={row.assignedTo.avatarHue}
+                            size={20}
+                          />
+                          <span className="truncate text-xs text-foreground">
+                            {row.assignedTo.name}
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TD>
+                    <TD className="hidden md:table-cell">
+                      {row.predictionConfidence != null ? (
+                        <span className="font-mono text-xs text-muted-foreground">
+                          {(row.predictionConfidence * 100).toFixed(0)}%
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TD>
+                    <TD className="hidden xl:table-cell">
+                      {row.followUpAt ? (
+                        <span
+                          className={cn(
+                            "text-xs",
+                            followUpDue ? "font-medium text-destructive" : "text-muted-foreground",
+                          )}
+                        >
+                          {followUpDue ? "Due " : ""}
+                          {formatDate(row.followUpAt)}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TD>
+                    <TD className="hidden text-xs text-muted-foreground xl:table-cell">
+                      {row.lastPredictedAt ? relativeTime(row.lastPredictedAt) : "—"}
+                    </TD>
+                    <TD className="text-right">
+                      <PatientRowActions
+                        id={row.id}
+                        onArchive={() => onArchive(row.id, row.fullName)}
+                      />
+                    </TD>
+                  </TR>
+                );
+              })}
             </TBody>
           </Table>
 

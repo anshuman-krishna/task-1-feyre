@@ -1,0 +1,187 @@
+import { prisma } from "@/server/prisma";
+import { logAudit, type Actor } from "@/services/audit";
+import { STATUS_LABELS } from "@/services/workflow";
+import { ageFromDob, formatDate, formatDateTime } from "@/lib/format";
+
+const CSV_HEADERS = [
+  "id",
+  "fullName",
+  "email",
+  "dob",
+  "age",
+  "sex",
+  "status",
+  "assignedTo",
+  "riskLevel",
+  "confidence",
+  "aiPrediction",
+  "lastPredictedAt",
+  "followUpAt",
+  "glucose",
+  "haemoglobin",
+  "cholesterol",
+  "systolic",
+  "diastolic",
+  "bmi",
+  "createdAt",
+];
+
+function escapeCsv(v: unknown) {
+  if (v == null) return "";
+  const s = String(v);
+  if (s.includes(",") || s.includes('"') || s.includes("\n")) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+export async function patientsCsv(actor?: Actor) {
+  const rows = await prisma.patient.findMany({
+    where: { archivedAt: null },
+    orderBy: { createdAt: "desc" },
+    include: { assignedTo: { select: { name: true } } },
+  });
+
+  const lines = [CSV_HEADERS.join(",")];
+  for (const r of rows) {
+    lines.push(
+      [
+        r.id,
+        r.fullName,
+        r.email,
+        r.dob.toISOString().slice(0, 10),
+        ageFromDob(r.dob),
+        r.sex ?? "",
+        r.status,
+        r.assignedTo?.name ?? "",
+        r.riskLevel ?? "",
+        r.predictionConfidence?.toFixed(2) ?? "",
+        r.aiPrediction ?? "",
+        r.lastPredictedAt?.toISOString() ?? "",
+        r.followUpAt?.toISOString() ?? "",
+        r.glucose ?? "",
+        r.haemoglobin ?? "",
+        r.cholesterol ?? "",
+        r.systolic ?? "",
+        r.diastolic ?? "",
+        r.bmi ?? "",
+        r.createdAt.toISOString(),
+      ]
+        .map(escapeCsv)
+        .join(","),
+    );
+  }
+
+  await logAudit({
+    action: "export",
+    entityType: "patients",
+    entityId: "all",
+    actor,
+    metadata: { count: rows.length, format: "csv" },
+  });
+
+  return lines.join("\n");
+}
+
+export async function patientReportMarkdown(patientId: string, actor?: Actor) {
+  const [patient, predictions, notes] = await Promise.all([
+    prisma.patient.findUnique({
+      where: { id: patientId },
+      include: { assignedTo: true },
+    }),
+    prisma.predictionLog.findMany({
+      where: { patientId },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+    }),
+    prisma.note.findMany({
+      where: { patientId },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+    }),
+  ]);
+
+  if (!patient) throw new Error("patient not found");
+
+  const latest = predictions[0];
+  const lines: string[] = [];
+
+  lines.push(`# Patient report — ${patient.fullName}`);
+  lines.push(`_Generated ${formatDateTime(new Date())} · Mira Health Intelligence_`);
+  lines.push("");
+  lines.push("## Summary");
+  lines.push(`- **Email**: ${patient.email}`);
+  lines.push(`- **DOB**: ${formatDate(patient.dob)} (${ageFromDob(patient.dob)} yrs)`);
+  lines.push(`- **Sex**: ${patient.sex ?? "—"}`);
+  lines.push(`- **Status**: ${STATUS_LABELS[patient.status]}`);
+  lines.push(`- **Assigned clinician**: ${patient.assignedTo?.name ?? "—"}`);
+  if (patient.followUpAt) lines.push(`- **Next follow-up**: ${formatDate(patient.followUpAt)}`);
+  lines.push("");
+
+  lines.push("## Biomarkers");
+  lines.push("| Measure | Value | Unit |");
+  lines.push("|---|---|---|");
+  lines.push(`| Fasting glucose | ${patient.glucose ?? "—"} | mg/dL |`);
+  lines.push(`| Haemoglobin | ${patient.haemoglobin ?? "—"} | g/dL |`);
+  lines.push(`| Cholesterol | ${patient.cholesterol ?? "—"} | mg/dL |`);
+  lines.push(
+    `| Blood pressure | ${patient.systolic ?? "—"}/${patient.diastolic ?? "—"} | mmHg |`,
+  );
+  lines.push(`| BMI | ${patient.bmi ?? "—"} | kg/m² |`);
+  lines.push("");
+
+  if (latest) {
+    lines.push("## Latest AI observation");
+    lines.push(`- **Condition**: ${latest.condition}`);
+    lines.push(`- **Risk level**: ${latest.riskLevel}`);
+    lines.push(`- **Confidence**: ${(latest.confidence * 100).toFixed(0)}%`);
+    lines.push(`- **Provider**: ${latest.provider}${latest.model ? ` · ${latest.model}` : ""}`);
+    lines.push(`- **Generated**: ${formatDateTime(latest.createdAt)}`);
+    lines.push("");
+    lines.push(`> ${latest.summary}`);
+    lines.push("");
+
+    const recs = (latest.recommendations as string[]) ?? [];
+    if (recs.length) {
+      lines.push("### Recommendations");
+      for (const r of recs) lines.push(`- ${r}`);
+      lines.push("");
+    }
+  }
+
+  if (predictions.length > 1) {
+    lines.push("## Risk history");
+    for (const p of predictions) {
+      lines.push(
+        `- ${formatDateTime(p.createdAt)} · **${p.riskLevel}** · ${(p.confidence * 100).toFixed(0)}% · ${p.condition}`,
+      );
+    }
+    lines.push("");
+  }
+
+  if (notes.length) {
+    lines.push("## Clinician notes");
+    for (const n of notes) {
+      lines.push(`**${n.author}** · ${formatDateTime(n.createdAt)}`);
+      lines.push("");
+      lines.push(`> ${n.body.replace(/\n/g, "\n> ")}`);
+      lines.push("");
+    }
+  }
+
+  lines.push("---");
+  lines.push(
+    "_This report is generated by Mira Health Intelligence. AI observations are risk signals, not medical diagnoses. Review with a qualified clinician._",
+  );
+
+  await logAudit({
+    action: "export",
+    entityType: "patient",
+    entityId: patientId,
+    patientId,
+    actor,
+    metadata: { format: "markdown" },
+  });
+
+  return lines.join("\n");
+}

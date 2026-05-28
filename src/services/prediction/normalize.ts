@@ -1,4 +1,4 @@
-import type { PredictionResult, BiomarkerObservation } from "./types";
+import type { PredictionResult, BiomarkerObservation, Contribution } from "./types";
 import type { RiskLevel } from "@prisma/client";
 
 const RISK_ORDER: RiskLevel[] = ["low", "moderate", "elevated", "critical"];
@@ -13,7 +13,6 @@ export function clampRisk(r: unknown): RiskLevel {
   return "low";
 }
 
-// guarantees the canonical shape regardless of provider eccentricities
 export function normalize(raw: Partial<PredictionResult>): PredictionResult {
   return {
     riskLevel: clampRisk(raw.riskLevel),
@@ -25,6 +24,9 @@ export function normalize(raw: Partial<PredictionResult>): PredictionResult {
       : [],
     observations: Array.isArray(raw.observations)
       ? (raw.observations as BiomarkerObservation[]).slice(0, 8)
+      : [],
+    contributions: Array.isArray(raw.contributions)
+      ? (raw.contributions as Contribution[]).slice(0, 8)
       : [],
   };
 }

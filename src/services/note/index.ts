@@ -1,6 +1,6 @@
 import { prisma } from "@/server/prisma";
 import { NotFound } from "@/lib/api-error";
-import { logAudit } from "@/services/audit";
+import { logAudit, type Actor } from "@/services/audit";
 import type { NoteCreateInput } from "@/features/patients/schema";
 
 export async function listNotes(patientId: string) {
@@ -10,7 +10,7 @@ export async function listNotes(patientId: string) {
   });
 }
 
-export async function createNote(patientId: string, input: NoteCreateInput, performedBy?: string) {
+export async function createNote(patientId: string, input: NoteCreateInput, actor?: Actor) {
   const patient = await prisma.patient.findUnique({ where: { id: patientId } });
   if (!patient) throw NotFound("patient");
 
@@ -18,7 +18,7 @@ export async function createNote(patientId: string, input: NoteCreateInput, perf
     data: {
       patientId,
       body: input.body,
-      author: input.author ?? performedBy ?? "clinician",
+      author: input.author ?? actor?.name ?? "clinician",
     },
   });
 
@@ -27,14 +27,14 @@ export async function createNote(patientId: string, input: NoteCreateInput, perf
     entityType: "note",
     entityId: note.id,
     patientId,
-    performedBy,
+    actor,
     metadata: { preview: input.body.slice(0, 80) },
   });
 
   return note;
 }
 
-export async function deleteNote(noteId: string, performedBy?: string) {
+export async function deleteNote(noteId: string, actor?: Actor) {
   const note = await prisma.note.findUnique({ where: { id: noteId } });
   if (!note) throw NotFound("note");
 
@@ -45,7 +45,7 @@ export async function deleteNote(noteId: string, performedBy?: string) {
     entityType: "note",
     entityId: noteId,
     patientId: note.patientId,
-    performedBy,
+    actor,
   });
 
   return { id: noteId };

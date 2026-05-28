@@ -1,4 +1,4 @@
-import type { RiskLevel } from "@prisma/client";
+import type { RiskLevel, WorkflowStatus } from "@prisma/client";
 import { prisma } from "@/server/prisma";
 
 export type DashboardSummary = {
@@ -6,6 +6,8 @@ export type DashboardSummary = {
   predictionsLast24h: number;
   highRiskCount: number;
   avgConfidence: number | null;
+  followUpBacklog: number;
+  predictionFailures24h: number;
   trends: {
     patients30d: number;
     predictions24hDelta: number;
@@ -22,34 +24,49 @@ export async function dashboardSummary(): Promise<DashboardSummary> {
   const prev7d = new Date(now.getTime() - 14 * day);
   const last30d = new Date(now.getTime() - 30 * day);
 
-  const [active, predictions24, predictionsPrev24, highRisk, highRisk7dAgo, confidence, created30d] =
-    await Promise.all([
-      prisma.patient.count({ where: { archivedAt: null } }),
-      prisma.predictionLog.count({ where: { createdAt: { gte: last24h } } }),
-      prisma.predictionLog.count({
-        where: { createdAt: { gte: prev24h, lt: last24h } },
-      }),
-      prisma.patient.count({
-        where: { archivedAt: null, riskLevel: { in: ["elevated", "critical"] } },
-      }),
-      prisma.predictionLog.count({
-        where: {
-          createdAt: { gte: prev7d, lt: last7d },
-          riskLevel: { in: ["elevated", "critical"] },
-        },
-      }),
-      prisma.patient.aggregate({
-        where: { archivedAt: null, predictionConfidence: { not: null } },
-        _avg: { predictionConfidence: true },
-      }),
-      prisma.patient.count({ where: { createdAt: { gte: last30d } } }),
-    ]);
+  const [
+    active,
+    predictions24,
+    predictionsPrev24,
+    highRisk,
+    highRisk7dAgo,
+    confidence,
+    created30d,
+    followUpBacklog,
+    predictionFailures24h,
+  ] = await Promise.all([
+    prisma.patient.count({ where: { archivedAt: null } }),
+    prisma.predictionLog.count({ where: { createdAt: { gte: last24h } } }),
+    prisma.predictionLog.count({ where: { createdAt: { gte: prev24h, lt: last24h } } }),
+    prisma.patient.count({
+      where: { archivedAt: null, riskLevel: { in: ["elevated", "critical"] } },
+    }),
+    prisma.predictionLog.count({
+      where: {
+        createdAt: { gte: prev7d, lt: last7d },
+        riskLevel: { in: ["elevated", "critical"] },
+      },
+    }),
+    prisma.patient.aggregate({
+      where: { archivedAt: null, predictionConfidence: { not: null } },
+      _avg: { predictionConfidence: true },
+    }),
+    prisma.patient.count({ where: { createdAt: { gte: last30d } } }),
+    prisma.patient.count({
+      where: { archivedAt: null, followUpAt: { lte: now } },
+    }),
+    prisma.predictionLog.count({
+      where: { createdAt: { gte: last24h }, error: { not: null } },
+    }),
+  ]);
 
   return {
     activePatients: active,
     predictionsLast24h: predictions24,
     highRiskCount: highRisk,
     avgConfidence: confidence._avg.predictionConfidence,
+    followUpBacklog,
+    predictionFailures24h,
     trends: {
       patients30d: created30d,
       predictions24hDelta: predictions24 - predictionsPrev24,
@@ -78,17 +95,32 @@ export async function riskDistribution() {
   return map;
 }
 
-// last 14 days, prediction throughput
+export async function statusDistribution() {
+  const grouped = await prisma.patient.groupBy({
+    by: ["status"],
+    where: { archivedAt: null },
+    _count: { _all: true },
+  });
+  const map: Record<WorkflowStatus, number> = {
+    new_patient: 0,
+    monitoring: 0,
+    follow_up_needed: 0,
+    stable: 0,
+    urgent_review: 0,
+  };
+  for (const g of grouped) map[g.status] = g._count._all;
+  return map;
+}
+
 export async function predictionThroughput(days = 14) {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  // raw, single-pass query for date bucketing
   const rows = await prisma.$queryRaw<{ day: Date; total: bigint; high: bigint }[]>`
     SELECT
-      date_trunc('day', "createdAt")              AS day,
-      COUNT(*)                                    AS total,
+      date_trunc('day', "createdAt") AS day,
+      COUNT(*)                       AS total,
       COUNT(*) FILTER (
         WHERE "riskLevel" IN ('elevated','critical')
-      )                                           AS high
+      )                              AS high
     FROM "prediction_logs"
     WHERE "createdAt" >= ${since}
     GROUP BY 1
@@ -101,7 +133,6 @@ export async function predictionThroughput(days = 14) {
   }));
 }
 
-// last 12 weeks, patient growth
 export async function patientGrowth(weeks = 12) {
   const since = new Date(Date.now() - weeks * 7 * 24 * 60 * 60 * 1000);
   const rows = await prisma.$queryRaw<{ week: Date; total: bigint }[]>`
@@ -113,6 +144,20 @@ export async function patientGrowth(weeks = 12) {
     ORDER BY 1 ASC
   `;
   return rows.map((r) => ({ week: r.week.toISOString(), total: Number(r.total) }));
+}
+
+export async function intakeVelocity() {
+  const day = 24 * 60 * 60 * 1000;
+  const now = new Date();
+  const last7d = new Date(now.getTime() - 7 * day);
+  const prev7d = new Date(now.getTime() - 14 * day);
+
+  const [last, prev] = await Promise.all([
+    prisma.patient.count({ where: { createdAt: { gte: last7d } } }),
+    prisma.patient.count({ where: { createdAt: { gte: prev7d, lt: last7d } } }),
+  ]);
+
+  return { last7d: last, prev7d: prev, delta: last - prev };
 }
 
 export async function biomarkerAverages() {
@@ -128,4 +173,37 @@ export async function biomarkerAverages() {
     },
   });
   return agg._avg;
+}
+
+// items that need attention right now
+export async function operationalAlerts() {
+  const now = new Date();
+  const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+  const [criticalUnreviewed, followUpDue, failedPredictions] = await Promise.all([
+    prisma.patient.findMany({
+      where: {
+        archivedAt: null,
+        riskLevel: "critical",
+        OR: [{ reviewedAt: null }, { reviewedAt: { lt: dayAgo } }],
+      },
+      orderBy: { lastPredictedAt: "desc" },
+      take: 5,
+      include: { assignedTo: { select: { name: true } } },
+    }),
+    prisma.patient.findMany({
+      where: { archivedAt: null, followUpAt: { lte: now } },
+      orderBy: { followUpAt: "asc" },
+      take: 5,
+      include: { assignedTo: { select: { name: true } } },
+    }),
+    prisma.predictionLog.findMany({
+      where: { createdAt: { gte: dayAgo }, error: { not: null } },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+      include: { patient: { select: { fullName: true } } },
+    }),
+  ]);
+
+  return { criticalUnreviewed, followUpDue, failedPredictions };
 }
