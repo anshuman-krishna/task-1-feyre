@@ -9,6 +9,17 @@ export type EventMap = {
   "activity.recorded": { action: string; patientId: string | null };
   "patient.archived": { patientId: string };
   "patient.status_changed": { patientId: string; status: string };
+  "patient.assigned": { patientId: string; assignedToId: string | null };
+  "summary.refreshed": { patientId: string };
+  "automation.fired": {
+    ruleKey: string;
+    trigger: string;
+    patientId: string | null;
+    actions: string[];
+  };
+  "priority.recomputed": { patientId: string; score: number; band: string };
+  "trajectory.recomputed": { patientId: string; direction: string; score: number };
+  "analytics.refreshed": { kind: "snapshot" | "forecast" | "insight" };
 };
 
 type Listener = (data: EventMap[keyof EventMap], type: keyof EventMap) => void;

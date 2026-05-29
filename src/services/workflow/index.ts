@@ -55,18 +55,4 @@ export async function applyAutoTransition(patientId: string, actor?: Actor) {
   events.emit("patient.status_changed", { patientId, status: next });
 }
 
-export const STATUS_LABELS: Record<WorkflowStatus, string> = {
-  new_patient: "New",
-  monitoring: "Monitoring",
-  follow_up_needed: "Follow-up needed",
-  stable: "Stable",
-  urgent_review: "Urgent review",
-};
-
-export const STATUS_ORDER: WorkflowStatus[] = [
-  "urgent_review",
-  "follow_up_needed",
-  "monitoring",
-  "new_patient",
-  "stable",
-];
+export { STATUS_LABELS, STATUS_ORDER } from "./constants";

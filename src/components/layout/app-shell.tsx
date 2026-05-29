@@ -29,7 +29,7 @@ export function AppShell({
             aria-hidden
           />
           <div className="fixed inset-y-0 left-0 z-50 animate-fade-in md:hidden">
-            <Sidebar />
+            <Sidebar role={user?.role} />
           </div>
         </>
       )}

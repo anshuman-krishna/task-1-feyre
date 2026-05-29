@@ -16,7 +16,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   };
 
   return (
-    <AppShell sidebar={<Sidebar />} user={me}>
+    <AppShell sidebar={<Sidebar role={user.role} />} user={me}>
       {children}
     </AppShell>
   );

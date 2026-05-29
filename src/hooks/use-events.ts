@@ -12,7 +12,13 @@ type EventName =
   | "prediction.failed"
   | "notification.created"
   | "patient.status_changed"
-  | "patient.archived";
+  | "patient.archived"
+  | "patient.assigned"
+  | "summary.refreshed"
+  | "automation.fired"
+  | "priority.recomputed"
+  | "trajectory.recomputed"
+  | "analytics.refreshed";
 
 // global SSE subscription. wires server-emitted events into the client:
 // - react-query invalidations refresh client-fetched data
@@ -70,9 +76,35 @@ export function useEvents() {
           break;
         }
         case "patient.status_changed":
-        case "patient.archived": {
+        case "patient.archived":
+        case "patient.assigned": {
           qc.invalidateQueries({ queryKey: ["patients"] });
           qc.invalidateQueries({ queryKey: ["activity"] });
+          scheduleRefresh();
+          break;
+        }
+        case "summary.refreshed": {
+          const { patientId } = data as { patientId: string };
+          qc.invalidateQueries({ queryKey: ["summary", patientId] });
+          break;
+        }
+        case "automation.fired": {
+          qc.invalidateQueries({ queryKey: ["automation"] });
+          qc.invalidateQueries({ queryKey: ["activity"] });
+          break;
+        }
+        case "priority.recomputed": {
+          qc.invalidateQueries({ queryKey: ["priority"] });
+          break;
+        }
+        case "trajectory.recomputed": {
+          const { patientId } = data as { patientId: string };
+          qc.invalidateQueries({ queryKey: ["trajectory", patientId] });
+          qc.invalidateQueries({ queryKey: ["analytics"] });
+          break;
+        }
+        case "analytics.refreshed": {
+          qc.invalidateQueries({ queryKey: ["analytics"] });
           scheduleRefresh();
           break;
         }
@@ -96,6 +128,12 @@ export function useEvents() {
       "notification.created",
       "patient.status_changed",
       "patient.archived",
+      "patient.assigned",
+      "summary.refreshed",
+      "automation.fired",
+      "priority.recomputed",
+      "trajectory.recomputed",
+      "analytics.refreshed",
     ];
     for (const t of types) es.addEventListener(t, onAny);
 

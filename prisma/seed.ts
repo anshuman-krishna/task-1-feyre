@@ -5,6 +5,11 @@
 import { PrismaClient } from "@prisma/client";
 import { executePrediction } from "../src/services/prediction";
 import { logAudit } from "../src/services/audit";
+import { recomputePriority } from "../src/services/priority";
+import { refreshPatientSummary } from "../src/services/ai";
+import { fireAutomation } from "../src/services/automation";
+import { detectAndDispatchAnomalies } from "../src/services/anomaly";
+import { recomputeTrajectory, runWarehouse } from "../src/services/analytics";
 
 const prisma = new PrismaClient();
 
@@ -23,6 +28,7 @@ type Seed = {
 };
 
 const ORG = { id: "org_riverside", name: "Riverside Diagnostics", slug: "riverside" };
+const PILOT_ORG = { id: "org_northwood", name: "Northwood Clinic (pilot)", slug: "northwood" };
 
 const users = [
   { id: "u_reyes", name: "Dr. Maria Reyes", email: "maria.reyes@mira.health", role: "admin" as const, avatarHue: 178 },
@@ -57,22 +63,38 @@ const seeds: Seed[] = [
 ];
 
 async function main() {
+  await prisma.approval.deleteMany();
+  await prisma.summaryRevision.deleteMany();
+  await prisma.aIRun.deleteMany();
+  await prisma.backupSnapshot.deleteMany();
+  await prisma.policy.deleteMany();
   await prisma.notification.deleteMany();
+  await prisma.automationEvent.deleteMany();
+  await prisma.automationRule.deleteMany();
+  await prisma.patientSummary.deleteMany();
+  await prisma.priorityScore.deleteMany();
   await prisma.predictionJob.deleteMany();
   await prisma.note.deleteMany();
   await prisma.predictionLog.deleteMany();
   await prisma.auditLog.deleteMany();
+  await prisma.orgMembership.deleteMany();
   await prisma.patient.deleteMany();
   await prisma.user.deleteMany();
   await prisma.organization.deleteMany();
 
-  console.log("seeding organization…");
+  console.log("seeding organizations…");
   await prisma.organization.create({ data: ORG });
+  await prisma.organization.create({ data: PILOT_ORG });
 
   console.log(`seeding ${users.length} users…`);
   for (const u of users) {
     await prisma.user.create({ data: { ...u, organizationId: ORG.id } });
   }
+
+  // give the admin access to the pilot org for the org switcher demo
+  await prisma.orgMembership.create({
+    data: { userId: "u_reyes", organizationId: PILOT_ORG.id, role: "admin" },
+  });
 
   console.log(`seeding ${seeds.length} patients…`);
   const now = Date.now();
@@ -164,24 +186,40 @@ async function main() {
     });
   }
 
-  // pre-seeded notifications so the bell has real content on first boot
-  const critical = await prisma.patient.findMany({
-    where: { riskLevel: "critical" },
-    take: 3,
-  });
-  for (const p of critical) {
-    if (!p.assignedToId) continue;
-    await prisma.notification.create({
-      data: {
-        organizationId: ORG.id,
-        userId: p.assignedToId,
-        type: "patient_critical",
-        title: `${p.fullName} flagged critical`,
-        body: p.aiPrediction ?? "see latest observation",
-        link: `/patients/${p.id}`,
+  console.log("priming intelligence layer (summaries, priorities, automation)…");
+  const seededPatients = await prisma.patient.findMany();
+  for (const p of seededPatients) {
+    if (!p.riskLevel) continue;
+    // automation-fire path: matches what the queue worker does post-prediction.
+    await fireAutomation("prediction_completed", {
+      organizationId: ORG.id,
+      patientId: p.id,
+      payload: {
+        riskLevel: p.riskLevel,
+        condition: p.aiPrediction,
+        requestedBy: p.assignedToId,
+        jobId: "seed",
       },
     });
+    await detectAndDispatchAnomalies(p.id, ORG.id);
+    await recomputePriority(p.id);
+    await recomputeTrajectory(p.id).catch(() => null);
+    if (p.riskLevel === "critical" || p.riskLevel === "elevated") {
+      await refreshPatientSummary(p.id, { reason: "seed" });
+    }
   }
+
+  console.log("priming analytics warehouse…");
+  // backfill several days of snapshots so the dashboard has trend lines
+  // and the insight engine has something to compare. captureDailySnapshot
+  // bucketizes capturedFor to UTC day start and upserts on re-run.
+  const { captureDailySnapshot } = await import("../src/services/analytics");
+  const day = 24 * 60 * 60 * 1000;
+  for (let i = 13; i >= 0; i--) {
+    await captureDailySnapshot(ORG.id, new Date(Date.now() - i * day));
+  }
+  await runWarehouse(ORG.id);
+  await runWarehouse(PILOT_ORG.id).catch(() => null);
 
   console.log("✓ seed complete");
   console.log("→ sign in at /sign-in using any of the seeded accounts");

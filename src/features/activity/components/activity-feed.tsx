@@ -3,23 +3,32 @@ import {
   Activity as ActivityIcon,
   AlertTriangle,
   Archive,
+  Brain,
+  Building2,
   ClipboardList,
+  Database,
   Eye,
   FileDown,
+  Flame,
   LogIn,
   LogOut,
   Pencil,
+  RotateCcw,
+  ScrollText,
+  Server,
+  ShieldCheck,
   Sparkles,
   Trash2,
   UserCog,
   UserPlus,
+  Wand2,
   Workflow,
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/empty-state";
 import { relativeTime } from "@/lib/format";
 import { cn } from "@/lib/cn";
-import { STATUS_LABELS } from "@/services/workflow";
+import { STATUS_LABELS } from "@/services/workflow/constants";
 import type { WorkflowStatus } from "@prisma/client";
 
 export type ActivityEntry = {
@@ -40,7 +49,21 @@ export type ActivityEntry = {
     | "sign_in"
     | "sign_out"
     | "bulk_archive"
-    | "bulk_status";
+    | "bulk_status"
+    | "automation_fire"
+    | "summary_refresh"
+    | "copilot_query"
+    | "approval_requested"
+    | "approval_decided"
+    | "policy_change"
+    | "provider_change"
+    | "rule_toggled"
+    | "org_switch"
+    | "simulation_run"
+    | "manual_retry"
+    | "backup_created"
+    | "consent_change"
+    | "retention_change";
   patientId: string | null;
   patientName: string | null;
   performedBy: string | null;
@@ -153,6 +176,100 @@ const meta: Record<
       const label = m?.status ? STATUS_LABELS[m.status] : "updated";
       return `moved ${m?.count ?? "several"} patients → ${label}`;
     },
+  },
+  automation_fire: {
+    icon: Wand2,
+    tint: "bg-indigo-50 text-indigo-700",
+    label: (e) => {
+      const m = e.metadata as { rule?: string; reason?: string } | null;
+      return `automation · ${m?.rule ?? "rule fired"}${m?.reason ? ` — ${m.reason}` : ""}`;
+    },
+  },
+  summary_refresh: {
+    icon: Brain,
+    tint: "bg-accent text-accent-foreground",
+    label: (e) => `refreshed summary for ${e.patientName ?? "patient"}`,
+  },
+  copilot_query: {
+    icon: Sparkles,
+    tint: "bg-accent text-accent-foreground",
+    label: (e) => {
+      const action = (e.metadata as { action?: string } | null)?.action ?? "query";
+      return `ran copilot · ${action}`;
+    },
+  },
+  approval_requested: {
+    icon: ScrollText,
+    tint: "bg-amber-50 text-amber-800",
+    label: (e) => {
+      const kind = (e.metadata as { kind?: string } | null)?.kind ?? "approval";
+      return `requested approval · ${kind}`;
+    },
+  },
+  approval_decided: {
+    icon: ScrollText,
+    tint: "bg-indigo-50 text-indigo-700",
+    label: (e) => {
+      const m = e.metadata as { decision?: string; kind?: string } | null;
+      return `${m?.decision ?? "decided"} approval · ${m?.kind ?? ""}`;
+    },
+  },
+  policy_change: {
+    icon: ShieldCheck,
+    tint: "bg-indigo-50 text-indigo-700",
+    label: (e) => {
+      const m = e.metadata as { kind?: string; revision?: number } | null;
+      return `updated ${m?.kind ?? "policy"} (rev ${m?.revision ?? "?"})`;
+    },
+  },
+  provider_change: {
+    icon: Server,
+    tint: "bg-indigo-50 text-indigo-700",
+    label: (e) => `provider config changed`,
+  },
+  rule_toggled: {
+    icon: Wand2,
+    tint: "bg-indigo-50 text-indigo-700",
+    label: (e) => {
+      const m = e.metadata as { key?: string; enabled?: boolean } | null;
+      return `${m?.enabled ? "enabled" : "disabled"} rule ${m?.key ?? ""}`;
+    },
+  },
+  org_switch: {
+    icon: Building2,
+    tint: "bg-muted text-muted-foreground",
+    label: () => `switched organization`,
+  },
+  simulation_run: {
+    icon: Flame,
+    tint: "bg-orange-50 text-orange-800",
+    label: (e) => {
+      const m = e.metadata as { kind?: string; intensity?: number } | null;
+      return `ran simulation · ${m?.kind ?? ""} (i=${m?.intensity ?? "?"})`;
+    },
+  },
+  manual_retry: {
+    icon: RotateCcw,
+    tint: "bg-amber-50 text-amber-800",
+    label: () => `retried a queue job`,
+  },
+  backup_created: {
+    icon: Database,
+    tint: "bg-emerald-50 text-emerald-700",
+    label: (e) => {
+      const m = e.metadata as { label?: string; bytes?: number } | null;
+      return `captured backup · ${m?.label ?? ""} (${m?.bytes ?? 0}b)`;
+    },
+  },
+  consent_change: {
+    icon: ShieldCheck,
+    tint: "bg-amber-50 text-amber-800",
+    label: (e) => `updated consent for ${e.patientName ?? "patient"}`,
+  },
+  retention_change: {
+    icon: ShieldCheck,
+    tint: "bg-amber-50 text-amber-800",
+    label: (e) => `updated retention for ${e.patientName ?? "patient"}`,
   },
 };
 

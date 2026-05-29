@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { LogOut, Menu, Search } from "lucide-react";
+import { LogOut, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -14,6 +14,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar } from "@/components/avatar";
 import { NotificationBell } from "@/features/notifications/components/notification-bell";
+import { SearchBox } from "@/features/search/components/search-box";
+import { OrgSwitcher } from "@/features/organization/components/org-switcher";
 
 export type CurrentUser = {
   id: string;
@@ -55,17 +57,10 @@ export function Header({
         <Menu className="h-4 w-4" />
       </Button>
 
-      <div className="relative flex max-w-md flex-1 items-center">
-        <Search className="pointer-events-none absolute left-3 h-4 w-4 text-muted-foreground" />
-        <input
-          type="search"
-          placeholder="Search patients, predictions, audits…"
-          className="h-9 w-full rounded-md border border-border bg-surface pl-9 pr-3 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label="Search"
-        />
-      </div>
+      <SearchBox />
 
       <div className="ml-auto flex items-center gap-2">
+        <OrgSwitcher />
         <NotificationBell />
 
         {user ? (

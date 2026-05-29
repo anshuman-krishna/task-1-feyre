@@ -28,6 +28,11 @@ import { PredictionTimeline } from "@/features/predictions/components/prediction
 import { NoteList } from "@/features/notes/components/note-list";
 import { ActivityFeed } from "@/features/activity/components/activity-feed";
 import { StatusSelect } from "@/features/patients/components/status-select";
+import { SummaryCard } from "@/features/ai/components/summary-card";
+import { AnomalyList } from "@/features/ai/components/anomaly-list";
+import { LineagePanel } from "@/features/ai/components/lineage-panel";
+import { TrajectoryCard } from "@/features/ai/components/trajectory-card";
+import { ConsentPanel } from "@/features/patients/components/consent-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -238,6 +243,33 @@ export default async function PatientDetailPage({
           latest={latest}
           hasBiomarkers={hasBiomarkers(patient)}
           jobStatus={activeJob?.status ?? null}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <SummaryCard patientId={patient.id} />
+        </div>
+        <AnomalyList patientId={patient.id} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <TrajectoryCard patientId={patient.id} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <LineagePanel patientId={patient.id} />
+        </div>
+        <ConsentPanel
+          patientId={patient.id}
+          initial={{
+            consentResearch: patient.consentResearch,
+            consentDataSharing: patient.consentDataSharing,
+            retentionUntil: patient.retentionUntil ? patient.retentionUntil.toISOString() : null,
+          }}
         />
       </div>
 

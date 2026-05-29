@@ -6,13 +6,14 @@ import {
   Activity,
   BarChart3,
   Settings,
+  ShieldCheck,
   Stethoscope,
   Users,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 
-type NavItem = { href: string; label: string; icon: LucideIcon };
+type NavItem = { href: string; label: string; icon: LucideIcon; role?: "admin" };
 
 const primary: NavItem[] = [
   { href: "/", label: "Dashboard", icon: Activity },
@@ -20,9 +21,18 @@ const primary: NavItem[] = [
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
 ];
 
-const secondary: NavItem[] = [{ href: "/settings", label: "Settings", icon: Settings }];
+const secondary: NavItem[] = [
+  { href: "/admin", label: "Administration", icon: ShieldCheck, role: "admin" },
+  { href: "/settings", label: "Settings", icon: Settings },
+];
 
-export function Sidebar({ className }: { className?: string }) {
+export function Sidebar({
+  className,
+  role,
+}: {
+  className?: string;
+  role?: string;
+}) {
   const pathname = usePathname();
 
   const isActive = (href: string) =>
@@ -61,17 +71,19 @@ export function Sidebar({ className }: { className?: string }) {
           System
         </p>
         <ul className="space-y-0.5">
-          {secondary.map((item) => (
-            <NavLink key={item.href} item={item} active={isActive(item.href)} />
-          ))}
+          {secondary
+            .filter((item) => !item.role || item.role === role)
+            .map((item) => (
+              <NavLink key={item.href} item={item} active={isActive(item.href)} />
+            ))}
         </ul>
       </nav>
 
       <div className="border-t border-border p-3">
         <div className="rounded-md bg-muted/60 p-3">
-          <p className="text-xs font-medium text-foreground">Phase 1 preview</p>
+          <p className="text-xs font-medium text-foreground">Pilot-ready</p>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            AI prediction layer wires up in the next phase.
+            Governance, lineage and operational controls active.
           </p>
         </div>
       </div>

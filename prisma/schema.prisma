@@ -44,6 +44,20 @@ enum AuditAction {
   sign_out
   bulk_archive
   bulk_status
+  automation_fire
+  summary_refresh
+  copilot_query
+  approval_requested
+  approval_decided
+  policy_change
+  provider_change
+  rule_toggled
+  org_switch
+  simulation_run
+  manual_retry
+  backup_created
+  consent_change
+  retention_change
 }
 
 enum Role {
@@ -53,7 +67,7 @@ enum Role {
 }
 
 enum WorkflowStatus {
-  new_patient        @map("new")
+  new_patient      @map("new")
   monitoring
   follow_up_needed
   stable
@@ -74,6 +88,61 @@ enum NotificationType {
   follow_up_due
   patient_critical
   system
+  automation
+  anomaly_detected
+  assignment_changed
+}
+
+enum NotificationPriority {
+  low
+  normal
+  high
+  critical
+}
+
+enum AutomationTrigger {
+  prediction_completed
+  prediction_dead_letter
+  follow_up_overdue
+  critical_unreviewed
+  status_inactive
+  biomarker_anomaly
+}
+
+enum ApprovalKind {
+  summary_publication
+  workflow_escalation
+  automation_action
+  policy_change
+}
+
+enum ApprovalState {
+  pending
+  approved
+  rejected
+  withdrawn
+}
+
+enum PolicyKind {
+  notification
+  escalation
+  retention
+  assignment
+  confidence
+  approval
+}
+
+enum SummaryApprovalState {
+  draft
+  pending_review
+  published
+}
+
+enum AIRunKind {
+  patient_summary
+  clinician_handoff
+  critical_digest
+  follow_up_brief
 }
 
 model Organization {
@@ -84,10 +153,29 @@ model Organization {
   updatedAt DateTime @updatedAt
 
   users         User[]
+  memberships   OrgMembership[]
   patients      Patient[]
   notifications Notification[]
 
   @@map("organizations")
+}
+
+// users-to-orgs many-to-many for the org switcher. the primary
+// User.organizationId stays as the user's home org; memberships allow
+// crossing into others. role on the membership wins over the home role
+// when the user is acting in a non-home org.
+model OrgMembership {
+  id             String       @id @default(cuid())
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  role           Role         @default(clinician)
+  createdAt      DateTime     @default(now())
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@map("org_memberships")
 }
 
 model User {
@@ -95,15 +183,18 @@ model User {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  name      String
-  email     String   @unique
-  role      Role     @default(clinician)
-  avatarHue Int      @default(180)
+  name       String
+  email      String    @unique
+  role       Role      @default(clinician)
+  avatarHue  Int       @default(180)
   archivedAt DateTime?
 
-  assignedPatients Patient[]      @relation("AssignedClinician")
-  auditLogs        AuditLog[]
-  notifications    Notification[]
+  assignedPatients   Patient[]       @relation("AssignedClinician")
+  auditLogs          AuditLog[]
+  notifications      Notification[]
+  memberships        OrgMembership[]
+  approvalsRequested Approval[]      @relation("ApprovalRequester")
+  approvalsDecided   Approval[]      @relation("ApprovalDecider")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -117,35 +208,48 @@ model Patient {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  fullName  String
-  email     String
-  dob       DateTime @db.Date
-  sex       String?
+  fullName String
+  email    String
+  dob      DateTime @db.Date
+  sex      String?
 
-  glucose             Float?
-  haemoglobin         Float?
-  cholesterol         Float?
-  systolic            Int?
-  diastolic           Int?
-  bmi                 Float?
+  glucose     Float?
+  haemoglobin Float?
+  cholesterol Float?
+  systolic    Int?
+  diastolic   Int?
+  bmi         Float?
 
   aiPrediction         String?
   riskLevel            RiskLevel?
   predictionConfidence Float?
   lastPredictedAt      DateTime?
 
-  status        WorkflowStatus @default(new_patient)
-  assignedToId  String?
-  assignedTo    User?          @relation("AssignedClinician", fields: [assignedToId], references: [id], onDelete: SetNull)
-  followUpAt    DateTime?
-  reviewedAt    DateTime?
+  status       WorkflowStatus @default(new_patient)
+  assignedToId String?
+  assignedTo   User?          @relation("AssignedClinician", fields: [assignedToId], references: [id], onDelete: SetNull)
+  followUpAt   DateTime?
+  reviewedAt   DateTime?
 
   archivedAt DateTime?
 
-  predictions    PredictionLog[]
-  predictionJobs PredictionJob[]
-  notes          Note[]
-  auditLogs      AuditLog[]
+  // compliance fields. consent flags default to false (no implicit consent);
+  // retentionUntil drives the soft-purge sweep — null means "indefinite".
+  consentResearch    Boolean   @default(false)
+  consentDataSharing Boolean   @default(false)
+  retentionUntil     DateTime?
+
+  predictions      PredictionLog[]
+  predictionJobs   PredictionJob[]
+  notes            Note[]
+  auditLogs        AuditLog[]
+  summary          PatientSummary?
+  summaryRevisions SummaryRevision[]
+  automationEvents AutomationEvent[]
+  priorityScore    PriorityScore?
+  trajectoryScore  TrajectoryScore?
+  aiRuns           AIRun[]
+  approvals        Approval[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -216,8 +320,8 @@ model Note {
   patientId String
   patient   Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
 
-  body      String
-  author    String  @default("system")
+  body   String
+  author String @default("system")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -250,22 +354,423 @@ model AuditLog {
 }
 
 model Notification {
-  id             String           @id @default(cuid())
+  id             String       @id @default(cuid())
   organizationId String
-  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   userId         String
-  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  type    NotificationType
-  title   String
-  body    String?
-  link    String?
-  payload Json?
+  type        NotificationType
+  priority    NotificationPriority @default(normal)
+  title       String
+  body        String?
+  link        String?
+  payload     Json?
+  groupKey    String?
+  dedupeUntil DateTime?
 
-  readAt    DateTime?
-  createdAt DateTime  @default(now())
+  readAt      DateTime?
+  dismissedAt DateTime?
+  createdAt   DateTime  @default(now())
 
   @@index([userId, readAt, createdAt])
   @@index([organizationId, createdAt])
+  @@index([userId, groupKey, dedupeUntil])
   @@map("notifications")
+}
+
+// cached AI-generated patient summary. one per patient.
+// sourceVersion is a fingerprint of the inputs (latest prediction id,
+// note count, etc.) so the UI can render a "stale" indicator without
+// re-running the generator.
+model PatientSummary {
+  id        String  @id @default(cuid())
+  patientId String  @unique
+  patient   Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  overview           String
+  trajectory         String
+  observations       Json
+  recommendedActions Json
+  confidence         Float
+  generatedBy        String
+  model              String?
+  sourceVersion      String
+
+  // governance metadata. revision increments each regeneration so the
+  // UI + audit can refer to a specific frozen output. approvalState lets
+  // an admin require human sign-off before a summary is treated as canon.
+  revision      Int                  @default(1)
+  promptVersion String               @default("1")
+  promptId      String               @default("patient_summary.v1")
+  approvalState SummaryApprovalState @default(published)
+  aiRunId       String?
+  aiRun         AIRun?               @relation(fields: [aiRunId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("patient_summaries")
+}
+
+// every regeneration writes a SummaryRevision row. lineage queries walk
+// SummaryRevision -> AIRun to surface the model/prompt/inputs that
+// produced any historical output.
+model SummaryRevision {
+  id        String  @id @default(cuid())
+  patientId String
+  patient   Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  revision           Int
+  overview           String
+  trajectory         String
+  observations       Json
+  recommendedActions Json
+  confidence         Float
+  generatedBy        String
+  model              String?
+  promptVersion      String
+  promptId           String
+  sourceVersion      String
+  approvalState      SummaryApprovalState @default(published)
+  aiRunId            String?
+  aiRun              AIRun?               @relation(fields: [aiRunId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([patientId, revision])
+  @@index([patientId, createdAt])
+  @@map("summary_revisions")
+}
+
+// declarative automation rules. v1 the engine ships with a built-in
+// registry keyed by `key` — this table is the persisted view so admins
+// can toggle and audit them, and so the no-code editor can land later.
+model AutomationRule {
+  id             String            @id @default(cuid())
+  organizationId String
+  key            String
+  name           String
+  description    String?
+  trigger        AutomationTrigger
+  conditions     Json?
+  actions        Json
+  enabled        Boolean           @default(true)
+  lastFiredAt    DateTime?
+  fireCount      Int               @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, key])
+  @@index([organizationId, enabled])
+  @@map("automation_rules")
+}
+
+// fired automation event. one row per (rule, target) firing.
+model AutomationEvent {
+  id             String            @id @default(cuid())
+  organizationId String
+  ruleKey        String
+  ruleName       String
+  trigger        AutomationTrigger
+  patientId      String?
+  patient        Patient?          @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  reason         String
+  actions        Json
+  outcome        Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([patientId, createdAt])
+  @@map("automation_events")
+}
+
+// cached priority score per patient. recomputed when a relevant signal
+// shifts (prediction completed, status changed, follow-up touched).
+// kept in its own table so dashboards can sort by it cheaply.
+model PriorityScore {
+  patientId  String   @id
+  patient    Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  score      Float
+  band       String
+  reasons    Json
+  computedAt DateTime @default(now())
+
+  @@index([score])
+  @@index([band])
+  @@map("priority_scores")
+}
+
+// every orchestrator call writes one AIRun row. this is the lineage root
+// for AI artifacts — summaries, copilot responses, automation reasoning
+// all carry an aiRunId pointing back here. answering "why did this happen"
+// is a walk from artifact -> AIRun -> sourceContext + promptId + provider.
+model AIRun {
+  id             String    @id @default(cuid())
+  organizationId String
+  task           AIRunKind
+  promptId       String
+  promptVersion  String
+  provider       String
+  model          String?
+  latencyMs      Int
+  degraded       Boolean   @default(false)
+  reason         String?
+  confidence     Float?
+  patientId      String?
+  patient        Patient?  @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  actorId        String?
+  sourceVersion  String?
+  // a compact pointer to the context envelope — full payload omitted to
+  // keep storage modest; structured enough to reproduce a run via memory.
+  contextSummary Json?
+  outputSummary  Json?
+
+  createdAt DateTime @default(now())
+
+  patientSummaries PatientSummary[]
+  summaryRevisions SummaryRevision[]
+
+  @@index([organizationId, createdAt])
+  @@index([patientId, createdAt])
+  @@index([provider, task])
+  @@map("ai_runs")
+}
+
+// approval workflow. callers create a row in pending; an authorised user
+// transitions it via approve/reject. one approval per target — re-asking
+// requires a fresh row so the audit trail is linear.
+model Approval {
+  id             String        @id @default(cuid())
+  organizationId String
+  kind           ApprovalKind
+  state          ApprovalState @default(pending)
+  targetType     String
+  targetId       String
+  patientId      String?
+  patient        Patient?      @relation(fields: [patientId], references: [id], onDelete: SetNull)
+
+  requestedById   String?
+  requestedBy     User?   @relation("ApprovalRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+  requestedReason String?
+
+  decidedById    String?
+  decidedBy      User?     @relation("ApprovalDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedAt      DateTime?
+  decisionReason String?
+
+  payload Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, state, createdAt])
+  @@index([targetType, targetId])
+  @@index([patientId])
+  @@map("approvals")
+}
+
+// policy definitions per organization. v1 is JSON config keyed by
+// (organizationId, kind). a built-in defaults registry ships in code; the
+// row overrides defaults when present. each edit bumps revision and
+// audits the change.
+model Policy {
+  id             String     @id @default(cuid())
+  organizationId String
+  kind           PolicyKind
+  config         Json
+  revision       Int        @default(1)
+  description    String?
+  enabled        Boolean    @default(true)
+  lastEditedBy   String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@unique([organizationId, kind])
+  @@index([organizationId, enabled])
+  @@map("policies")
+}
+
+// recovery foundations. each snapshot captures a JSON summary of the
+// workspace at point-in-time — counts, queue depth, recent activity. real
+// cloud backups land later; this is the contract for what we'd capture.
+model BackupSnapshot {
+  id             String   @id @default(cuid())
+  organizationId String
+  label          String
+  kind           String   @default("manual")
+  digest         Json
+  bytes          Int      @default(0)
+  createdById    String?
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@map("backup_snapshots")
+}
+
+// analytics warehouse — separates transactional storage from analytical
+// storage so the operational layer never pays the cost of dashboard maths.
+// each snapshot is a frozen daily row of the metric set; reports + forecasts
+// + insights all read from this surface, not from the live tables.
+
+enum AnalyticsGrain {
+  daily
+  weekly
+}
+
+enum CohortKind {
+  critical_risk
+  elevated_risk
+  followup_overdue
+  recurring_anomaly
+  high_improvement
+  newly_critical
+  newly_stable
+  unreviewed_critical
+}
+
+enum TrajectoryDirection {
+  improving
+  stable
+  deteriorating
+  volatile
+}
+
+enum ForecastMetric {
+  patient_growth
+  prediction_volume
+  followup_demand
+  review_backlog
+  critical_volume
+}
+
+enum ReportKind {
+  executive_overview
+  cohort_overview
+  clinician_workload
+  ai_effectiveness
+  automation_health
+  governance_throughput
+  anomaly_trends
+  retention_outlook
+}
+
+model AnalyticsSnapshot {
+  id             String         @id @default(cuid())
+  organizationId String
+  grain          AnalyticsGrain @default(daily)
+  capturedFor    DateTime       @db.Date
+  metrics        Json
+  durationMs     Int            @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@unique([organizationId, grain, capturedFor])
+  @@index([organizationId, capturedFor])
+  @@map("analytics_snapshots")
+}
+
+// declarative metric registry — names, units, descriptions. snapshots
+// store values keyed by `key`. UI uses this registry to render labels +
+// formatting without hardcoding metric metadata in components.
+model MetricDefinition {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  label       String
+  unit        String   @default("count")
+  category    String   @default("operations")
+  description String?
+  createdAt   DateTime @default(now())
+
+  @@map("metric_definitions")
+}
+
+model CohortSnapshot {
+  id             String     @id @default(cuid())
+  organizationId String
+  kind           CohortKind
+  capturedFor    DateTime   @db.Date
+  size           Int
+  // delta vs prior snapshot — convenient cache for trend chips.
+  delta          Int        @default(0)
+  // sample of patient ids for drilldown; full list rebuilt on demand
+  // from `cohortMembers(kind)` to keep snapshot rows compact.
+  sampleIds      Json
+  attributes     Json?
+
+  createdAt DateTime @default(now())
+
+  @@unique([organizationId, kind, capturedFor])
+  @@index([organizationId, capturedFor])
+  @@map("cohort_snapshots")
+}
+
+model TrajectoryScore {
+  patientId    String              @id
+  patient      Patient             @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  direction    TrajectoryDirection
+  score        Float
+  confidence   Float
+  drivers      Json
+  computedAt   DateTime            @default(now())
+
+  @@index([direction])
+  @@index([score])
+  @@map("trajectory_scores")
+}
+
+model ForecastSnapshot {
+  id             String         @id @default(cuid())
+  organizationId String
+  metric         ForecastMetric
+  horizonDays    Int            @default(14)
+  generatedAt    DateTime       @default(now())
+  // structured payload: { history: [...], projection: [...], confidence,
+  // method } so the chart layer reads a single artifact.
+  payload        Json
+
+  @@index([organizationId, metric, generatedAt])
+  @@map("forecast_snapshots")
+}
+
+model ReportRun {
+  id             String     @id @default(cuid())
+  organizationId String
+  kind           ReportKind
+  startedAt      DateTime   @default(now())
+  finishedAt     DateTime?
+  durationMs     Int        @default(0)
+  rangeStart     DateTime?
+  rangeEnd       DateTime?
+  status         String     @default("ok")
+  summary        Json?
+
+  @@index([organizationId, kind, startedAt])
+  @@map("report_runs")
+}
+
+// emergent operational insights. produced by the insight engine on a
+// scheduled walk over snapshots — meant to read like a one-line note from
+// an operator ("approval queue rose 22%"). links back to the metric +
+// time window that produced it for explainability.
+model OperationalInsight {
+  id             String   @id @default(cuid())
+  organizationId String
+  category       String
+  severity       String   @default("info")
+  headline       String
+  detail         String?
+  metricKey      String?
+  payload        Json?
+  rangeStart     DateTime?
+  rangeEnd       DateTime?
+  resolvedAt     DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, category, createdAt])
+  @@map("operational_insights")
 }

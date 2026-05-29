@@ -1,6 +1,6 @@
 import type { WorkflowStatus } from "@prisma/client";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
-import { STATUS_LABELS, STATUS_ORDER } from "@/services/workflow";
+import { STATUS_LABELS, STATUS_ORDER } from "@/services/workflow/constants";
 import { cn } from "@/lib/cn";
 
 const tone: Record<WorkflowStatus, string> = {

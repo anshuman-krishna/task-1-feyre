@@ -141,6 +141,7 @@ export function PatientTable() {
         </div>
         <div className="flex items-center gap-2">
           <Button asChild variant="outline" size="sm">
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
             <a href="/api/patients/export">
               <Download className="h-3.5 w-3.5" /> Export CSV
             </a>

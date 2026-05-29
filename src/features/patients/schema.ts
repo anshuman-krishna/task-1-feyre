@@ -33,6 +33,9 @@ export const PatientCreateSchema = z.object({
 export const PatientUpdateSchema = PatientCreateSchema.partial().extend({
   status: WorkflowStatusSchema.optional(),
   followUpAt: z.string().nullable().optional(),
+  consentResearch: z.boolean().optional(),
+  consentDataSharing: z.boolean().optional(),
+  retentionUntil: z.string().nullable().optional(),
 });
 
 export const PatientQuerySchema = z.object({

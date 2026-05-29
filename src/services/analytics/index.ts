@@ -1,6 +1,55 @@
 import type { RiskLevel, WorkflowStatus } from "@prisma/client";
 import { prisma } from "@/server/prisma";
 
+export {
+  captureDailySnapshot,
+  recentSnapshots,
+  latestSnapshot,
+  metricSeries,
+  pickMetric,
+  metricList,
+} from "./warehouse";
+export { METRICS, metricDef, metricsByCategory } from "./metrics";
+export type { MetricKey, MetricDef, MetricCategory, MetricUnit } from "./metrics";
+export {
+  COHORTS,
+  cohortMembers,
+  captureCohortSnapshots,
+  cohortTrend,
+  latestCohorts,
+} from "./cohorts";
+export {
+  computeTrajectory,
+  recomputeTrajectory,
+  recomputeAllTrajectories,
+  trajectoryDistribution,
+  trajectoriesByDirection,
+} from "./trajectory";
+export type { TrajectoryDriver, TrajectorySummary } from "./trajectory";
+export {
+  generateForecast,
+  generateAllForecasts,
+  latestForecasts,
+  forecastMetrics,
+  forecastLabel,
+} from "./forecasting";
+export type { ForecastPayload, ForecastPoint } from "./forecasting";
+export { clinicianMetrics, clinicianInsights } from "./clinician";
+export type { ClinicianMetrics, ClinicianInsights } from "./clinician";
+export { automationHealth, automationEffectiveness } from "./automation";
+export type { AutomationHealth, AutomationEffectiveness } from "./automation";
+export { aiEffectiveness } from "./ai";
+export type { AIEffectiveness } from "./ai";
+export {
+  generateInsights,
+  persistInsights,
+  recentInsights,
+} from "./insights";
+export type { GeneratedInsight } from "./insights";
+export { REPORTS, runReport, recentReports } from "./reports";
+export { runWarehouse } from "./orchestrator";
+export type { WarehouseRunResult } from "./orchestrator";
+
 export type DashboardSummary = {
   activePatients: number;
   predictionsLast24h: number;

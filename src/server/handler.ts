@@ -1,12 +1,11 @@
 import { ZodError } from "zod";
 import { ApiError } from "@/lib/api-error";
 import { fail } from "@/lib/api-response";
-import type { NextResponse } from "next/server";
 
 // route-handler wrapper. centralises error mapping so handlers
 // can throw with intent and stay readable.
-export function withErrorHandling<TArgs extends unknown[]>(
-  handler: (...args: TArgs) => Promise<NextResponse> | NextResponse,
+export function withErrorHandling<TArgs extends unknown[], R extends Response>(
+  handler: (...args: TArgs) => Promise<R> | R,
 ) {
   return async (...args: TArgs) => {
     try {

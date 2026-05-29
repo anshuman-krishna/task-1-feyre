@@ -4,9 +4,12 @@ import { log } from "@/server/logger";
 import { metrics } from "@/server/metrics";
 import { events } from "@/server/events";
 import { executePrediction } from "@/services/prediction";
-import { createNotification } from "@/services/notification";
 import { applyAutoTransition } from "@/services/workflow";
 import { logAudit, type Actor } from "@/services/audit";
+import { fireAutomation } from "@/services/automation";
+import { detectAndDispatchAnomalies } from "@/services/anomaly";
+import { recomputePriority } from "@/services/priority";
+import { recomputeTrajectory } from "@/services/analytics";
 
 const DEFAULT_MAX_ATTEMPTS = 3;
 const RETRY_BACKOFF_MS = 5_000;
@@ -91,7 +94,26 @@ export async function processNextJob() {
     });
 
     await applyAutoTransition(job.patientId, actor);
-    await fanOutNotifications(job, outcome.result.riskLevel, outcome.result.condition);
+
+    const patient = await prisma.patient.findUnique({
+      where: { id: job.patientId },
+      select: { organizationId: true },
+    });
+    if (patient) {
+      await fireAutomation("prediction_completed", {
+        organizationId: patient.organizationId,
+        patientId: job.patientId,
+        payload: {
+          riskLevel: outcome.result.riskLevel,
+          condition: outcome.result.condition,
+          requestedBy: job.requestedBy,
+          jobId: job.id,
+        },
+      });
+      await detectAndDispatchAnomalies(job.patientId, patient.organizationId);
+      await recomputePriority(job.patientId);
+      await recomputeTrajectory(job.patientId).catch(() => null);
+    }
     return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : "unknown error";
@@ -123,6 +145,17 @@ async function failOrRetry(job: PredictionJob, message: string) {
       patientId: job.patientId,
       metadata: { message, attempts: job.attempts },
     });
+    const patient = await prisma.patient.findUnique({
+      where: { id: job.patientId },
+      select: { organizationId: true },
+    });
+    if (patient) {
+      await fireAutomation("prediction_dead_letter", {
+        organizationId: patient.organizationId,
+        patientId: job.patientId,
+        payload: { jobId: job.id, message, attempts: job.attempts },
+      });
+    }
   }
 }
 
@@ -135,32 +168,10 @@ async function resolveActor(userId: string | null): Promise<Actor> {
   return user ?? null;
 }
 
-async function fanOutNotifications(job: PredictionJob, risk: string, condition: string) {
-  // notify the assigned clinician (and requester if different) on
-  // elevated/critical outcomes only — low/moderate stays quiet
-  if (risk !== "critical" && risk !== "elevated") return;
-  const patient = await prisma.patient.findUnique({
-    where: { id: job.patientId },
-    include: { assignedTo: true },
-  });
-  if (!patient) return;
-
-  const recipients = new Set<string>();
-  if (patient.assignedToId) recipients.add(patient.assignedToId);
-  if (job.requestedBy) recipients.add(job.requestedBy);
-
-  for (const userId of recipients) {
-    await createNotification({
-      userId,
-      organizationId: patient.organizationId,
-      type: risk === "critical" ? "patient_critical" : "prediction_completed",
-      title: `${patient.fullName} flagged ${risk}`,
-      body: condition,
-      link: `/patients/${patient.id}`,
-      payload: { patientId: patient.id, riskLevel: risk, jobId: job.id },
-    });
-  }
-}
+// notification fan-out is now handled by the automation engine
+// (see rules.notify_on_critical_prediction). this keeps the queue worker
+// focused on job mechanics and lets the rule set evolve without touching
+// queue code.
 
 export async function queueDepth() {
   return prisma.predictionJob.groupBy({

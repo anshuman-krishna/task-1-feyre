@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { STATUS_LABELS, STATUS_ORDER } from "@/services/workflow";
+import { STATUS_LABELS, STATUS_ORDER } from "@/services/workflow/constants";
 import { useUpdatePatient } from "../queries";
 
 export function StatusSelect({

@@ -10,7 +10,11 @@ export type Notification = {
     | "prediction_failed"
     | "follow_up_due"
     | "patient_critical"
-    | "system";
+    | "system"
+    | "automation"
+    | "anomaly_detected"
+    | "assignment_changed";
+  priority: "low" | "normal" | "high" | "critical";
   title: string;
   body: string | null;
   link: string | null;
@@ -43,6 +47,15 @@ export function useMarkAllRead() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => fetcher<{ count: number }>("/api/notifications/read-all", { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: notificationsKey }),
+  });
+}
+
+export function useDismissNotification() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      fetcher<{ count: number }>(`/api/notifications/${id}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: notificationsKey }),
   });
 }

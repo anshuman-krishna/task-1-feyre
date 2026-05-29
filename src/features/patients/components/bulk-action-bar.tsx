@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { STATUS_LABELS, STATUS_ORDER } from "@/services/workflow";
+import { STATUS_LABELS, STATUS_ORDER } from "@/services/workflow/constants";
 import type { WorkflowStatus } from "@prisma/client";
 import { useBulkPatientAction } from "../queries";
 

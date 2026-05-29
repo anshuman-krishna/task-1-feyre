@@ -110,8 +110,16 @@ export async function updatePatient(id: string, input: PatientUpdateInput, actor
   const statusChanged = input.status !== undefined && input.status !== previous.status;
   const assigneeChanged =
     input.assignedToId !== undefined && input.assignedToId !== previous.assignedToId;
+  const consentChanged =
+    (input.consentResearch !== undefined && input.consentResearch !== previous.consentResearch) ||
+    (input.consentDataSharing !== undefined &&
+      input.consentDataSharing !== previous.consentDataSharing);
+  const retentionChanged =
+    input.retentionUntil !== undefined &&
+    String(input.retentionUntil ?? null) !==
+      String(previous.retentionUntil ? previous.retentionUntil.toISOString() : null);
 
-  const { followUpAt, ...rest } = input;
+  const { followUpAt, retentionUntil, ...rest } = input;
   await prisma.patient.update({
     where: { id },
     data: {
@@ -119,6 +127,12 @@ export async function updatePatient(id: string, input: PatientUpdateInput, actor
       dob: input.dob ? new Date(input.dob) : undefined,
       followUpAt:
         followUpAt === undefined ? undefined : followUpAt === null ? null : new Date(followUpAt),
+      retentionUntil:
+        retentionUntil === undefined
+          ? undefined
+          : retentionUntil === null
+            ? null
+            : new Date(retentionUntil),
       reviewedAt: statusChanged || assigneeChanged ? new Date() : undefined,
     },
   });
@@ -151,6 +165,40 @@ export async function updatePatient(id: string, input: PatientUpdateInput, actor
       patientId: id,
       actor,
       metadata: { from: previous.assignedToId, to: input.assignedToId },
+    });
+  }
+
+  if (consentChanged) {
+    await logAudit({
+      action: "consent_change",
+      entityType: "patient",
+      entityId: id,
+      patientId: id,
+      actor,
+      metadata: {
+        research:
+          input.consentResearch !== undefined
+            ? { from: previous.consentResearch, to: input.consentResearch }
+            : undefined,
+        dataSharing:
+          input.consentDataSharing !== undefined
+            ? { from: previous.consentDataSharing, to: input.consentDataSharing }
+            : undefined,
+      },
+    });
+  }
+
+  if (retentionChanged) {
+    await logAudit({
+      action: "retention_change",
+      entityType: "patient",
+      entityId: id,
+      patientId: id,
+      actor,
+      metadata: {
+        from: previous.retentionUntil,
+        to: input.retentionUntil,
+      },
     });
   }
 

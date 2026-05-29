@@ -4,6 +4,7 @@ import { cache } from "react";
 import { prisma } from "@/server/prisma";
 
 const COOKIE = "mira_session";
+const ORG_COOKIE = "mira_org";
 const SECRET = process.env.SESSION_SECRET ?? "dev-only-insecure-secret-replace-in-production";
 
 function sign(value: string) {
@@ -30,7 +31,10 @@ export function decodeSession(raw: string | undefined | null): string | null {
   return verify(userId, sig) ? userId : null;
 }
 
-// memoized per-request so the db is hit once per server render
+// memoized per-request so the db is hit once per server render.
+// the `organizationId` on the returned user reflects the active org from
+// the mira_org cookie (if the user is a member there); otherwise it stays
+// on the user's home org. role mirrors the membership role when active.
 export const getCurrentUser = cache(async () => {
   const jar = await cookies();
   const raw = jar.get(COOKIE)?.value;
@@ -38,8 +42,34 @@ export const getCurrentUser = cache(async () => {
   if (!userId) return null;
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user || user.archivedAt) return null;
+
+  const activeOrgId = jar.get(ORG_COOKIE)?.value;
+  if (activeOrgId && activeOrgId !== user.organizationId) {
+    const membership = await prisma.orgMembership.findUnique({
+      where: { userId_organizationId: { userId: user.id, organizationId: activeOrgId } },
+    });
+    if (membership) {
+      return { ...user, organizationId: activeOrgId, role: membership.role };
+    }
+  }
   return user;
 });
+
+export async function setActiveOrgCookie(organizationId: string) {
+  const jar = await cookies();
+  jar.set(ORG_COOKIE, organizationId, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30,
+  });
+}
+
+export async function clearActiveOrgCookie() {
+  const jar = await cookies();
+  jar.delete(ORG_COOKIE);
+}
 
 export async function setSessionCookie(userId: string) {
   const jar = await cookies();
